@@ -291,7 +291,7 @@ def test_net(
     # If we have already computed the boxes
     if os.path.exists(det_file):
         obj = load_object(det_file)
-        all_boxes, all_segms, all_keyps = obj['all_boxes'], obj['all_segms'], obj['all_keyps']
+        cls_boxes_i, cls_segms_i, cls_keyps_i, car_cls_i = obj['all_boxes'], obj['all_segms'], obj['all_keyps']
 
     else:
         model = initialize_model_from_cfg(args, gpu_id=gpu_id)
