@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument('--dataset', dest='dataset', default='ApolloScape', help='Dataset to use')
     parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN.yaml', help='Config file for training (and optionally testing)')
 <<<<<<< HEAD
+<<<<<<< HEAD
     parser.add_argument('--load_ckpt', default='/home/wudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step89999.pth', help='checkpoint path to load')
     parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/ApolloScape/ECCV2018_apollo/train')
 =======
@@ -34,15 +35,21 @@ def parse_args():
     parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/ApolloScape/ECCV2018_apollo/train')
 
 >>>>>>> update_stream/master
+=======
+    parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/Aug27-12-15-44_n606_step/ckpt/model_step8399.pth', help='checkpoint path to load')
+    parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/ApolloScape/ECCV2018_apollo/train/')
+>>>>>>> update_stream/master
 
     parser.add_argument('--load_detectron', help='path to the detectron weight pickle file')
     parser.add_argument('--output_dir', help='output directory to save the testing results. If not provided defaults to [args.load_ckpt|args.load_detectron]/../test.')
     parser.add_argument('--set', dest='set_cfgs', help='set config keys, will overwrite config in the cfg_file. See lib/core/config.py for all options', default=[], nargs='*')
     # val: [0, 208], test: [0, 1041]
-    parser.add_argument('--range', default=[0, 2], help='start (inclusive) and end (exclusive) indices', type=int, nargs=2)
+    parser.add_argument('--range', default=[0, 1041], help='start (inclusive) and end (exclusive) indices', type=int, nargs=2)
     parser.add_argument('--multi-gpu-testing', help='using multiple gpus for inference', default=False, action='store_true')
-    parser.add_argument('--vis', default=True,  dest='vis', help='visualize detections', action='store_true')
+    parser.add_argument('--vis', default=False,  dest='vis', help='visualize detections', action='store_true')
+    #parser.add_argument('--list_flag', default='val', help='Choosing between [val, test]')
     parser.add_argument('--list_flag', default='val', help='Choosing between [val, test]')
+
     return parser.parse_args()
 
 
@@ -86,8 +93,15 @@ if __name__ == '__main__':
     # manually set args.cuda
     args.cuda = True
 
+    # Wudi hard coded the following range
+    if args.list_flag == 'test':
+        args.range = [0, 1041]
+    elif args.list_flag == 'val':
+        args.arnge = [0, 206]
+
     run_inference(
         args,
         ind_range=args.range,
         multi_gpu_testing=args.multi_gpu_testing,
         check_expected_results=True)
+
