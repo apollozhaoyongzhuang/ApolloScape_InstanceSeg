@@ -9,7 +9,7 @@ import time
 import matplotlib
 matplotlib.use('Agg')
 import torch
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import _init_paths  # pylint: disable=unused-import
 from core.config import cfg, merge_cfg_from_file, merge_cfg_from_list, assert_and_infer_cfg
@@ -26,14 +26,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Test a Fast R-CNN network')
     parser.add_argument('--dataset', dest='dataset', default='ApolloScape', help='Dataset to use')
     parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN.yaml', help='Config file for training (and optionally testing)')
-<<<<<<< HEAD
-    parser.add_argument('--load_ckpt', default='/home/wudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step89999.pth', help='checkpoint path to load')
-    parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/ApolloScape/ECCV2018_apollo/train')
-=======
     parser.add_argument('--load_ckpt', default='/home/wudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step30855.pth', help='checkpoint path to load')
     parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/ApolloScape/ECCV2018_apollo/train')
 
->>>>>>> update_stream/master
 
     parser.add_argument('--load_detectron', help='path to the detectron weight pickle file')
     parser.add_argument('--output_dir', help='output directory to save the testing results. If not provided defaults to [args.load_ckpt|args.load_detectron]/../test.')
