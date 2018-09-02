@@ -396,17 +396,22 @@ def test_net_Car3D(
     roidb, dataset, start_ind, end_ind, total_num_images = get_roidb_and_dataset(dataset, proposal_file, ind_range, args)
     num_images = len(roidb)
     image_ids = []
-    json_dir = os.path.join(output_dir, 'json_'+args.list_flag)
+    if cfg.MODEL.TRANS_HEAD_ON:
+        json_dir = os.path.join(output_dir, 'json_'+args.list_flag+'_trans')
+    else:
+        json_dir = os.path.join(output_dir, 'json_'+args.list_flag)
 
     roidb = roidb
     for i, entry in enumerate(roidb):
         image_ids.append(entry['image'])
     args.image_ids = image_ids
 
-    model = initialize_model_from_cfg(args, gpu_id=gpu_id)
-    for i in tqdm(range(len(roidb))):
-        entry = roidb[i]
-        if not os.path.exists(os.path.join(json_dir, entry['image'].split('/')[-1][:-4]+'.json')):
+    file_complete_flag = [not os.path.exists(os.path.join(json_dir, entry['image'].split('/')[-1][:-4] + '.json')) for entry in roidb]
+    # If we don't have the complete json file, we will load the model and execute the following:
+    if np.sum(file_complete_flag):
+        model = initialize_model_from_cfg(args, gpu_id=gpu_id)
+        for i in tqdm(range(len(roidb))):
+            entry = roidb[i]
             if cfg.TEST.PRECOMPUTED_PROPOSALS:
                 # The roidb may contain ground-truth rois (for example, if the roidb
                 # comes from the training or val split). We only want to evaluate
@@ -422,6 +427,10 @@ def test_net_Car3D(
                 box_proposals = None
 
             im = cv2.imread(entry['image'])
+            ignored_mask_img = os.path.join(('/').join(entry['image'].split('/')[:-2]), 'ignore_mask', entry['image'].split('/')[-1])
+            ignored_mask = cv2.imread(ignored_mask_img, cv2.IMREAD_GRAYSCALE)
+            ignored_mask_binary = np.zeros(ignored_mask.shape)
+            ignored_mask_binary[ignored_mask > 250] = 1
             cls_boxes_i, cls_segms_i, _, car_cls_i, euler_angle_i, trans_pred_i = im_detect_all(model, im, box_proposals, timers, dataset)
 
             if i % 10 == 0:  # Reduce log file size
@@ -458,7 +467,9 @@ def test_net_Car3D(
                 trans_pred=trans_pred_i,
                 segms=cls_segms_i,
                 dataset=dataset.Car3D,
-                thresh=0.9
+                thresh=cfg.TEST.SCORE_THRESH_FOR_TRUTH_DETECTION,
+                ignored_mask_binary=ignored_mask_binary.astype('uint8'),
+                iou_ignore_threshold=args.iou_ignore_threshold
             )
 
             if cfg.VIS:

@@ -12,7 +12,12 @@ import numpy as np
 class fast_rcnn_outputs_car_cls_rot(nn.Module):
     def __init__(self, dim_in):
         super().__init__()
-        self.cls_score = nn.Linear(dim_in, cfg.MODEL.NUMBER_CARS)
+        # Using shape sim has different classes, the NN structure is the same
+        # it's mainly for historcial weight loading
+        if cfg.CAR_CLS.SIM_MAT_LOSS:
+            self.cls_score_shape_sim = nn.Linear(dim_in, cfg.MODEL.NUMBER_CARS)
+        else:
+            self.cls_score = nn.Linear(dim_in, cfg.MODEL.NUMBER_CARS)
         if cfg.CAR_CLS.CLS_SPECIFIC_ROT:
             self.rot_pred = nn.Linear(dim_in, 4 * cfg.MODEL.NUMBER_CARS)
         else:
@@ -21,50 +26,61 @@ class fast_rcnn_outputs_car_cls_rot(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        init.normal_(self.cls_score.weight, std=0.01)
-        init.constant_(self.cls_score.bias, 0)
+        if cfg.CAR_CLS.SIM_MAT_LOSS:
+            init.normal_(self.cls_score_shape_sim.weight, std=0.01)
+            init.constant_(self.cls_score_shape_sim.bias, 0)
+        else:
+            init.normal_(self.cls_score.weight, std=0.01)
+            init.constant_(self.cls_score.bias, 0)
         init.normal_(self.rot_pred.weight, std=0.001)
         init.constant_(self.rot_pred.bias, 0)
 
     def detectron_weight_mapping(self):
+        # Using shape sim has different classes
         detectron_weight_mapping = {
+            # 'cls_score_shape_sim.weight': 'cls_score_shape_sim_w',
+            # 'cls_score_shape_sim.bias': 'cls_score_shape_sim_b',
             'cls_score.weight': 'cls_score_w',
             'cls_score.bias': 'cls_score_b',
             'rot_pred.weight': 'rot_pred',
-            'rot_pred.bias': 'rot_pred'
-        }
+            'rot_pred.bias': 'rot_pred'}
         orphan_in_detectron = []
         return detectron_weight_mapping, orphan_in_detectron
 
     def forward(self, x):
         if x.dim() == 4:
             x = x.squeeze(3).squeeze(2)
-        cls_score = self.cls_score(x)
-        #if not self.training:
+        if cfg.CAR_CLS.SIM_MAT_LOSS:
+            cls_score = self.cls_score_shape_sim(x)
+        else:
+            cls_score = self.cls_score(x)
         cls = F.softmax(cls_score, dim=1)
 
         rot_pred = self.rot_pred(x)
+        if cfg.CAR_CLS.QUAT_NORM:
+            rot_pred = F.normalize(rot_pred, p=2, dim=1)
         return cls_score, cls, rot_pred
 
 
 def fast_rcnn_car_cls_rot_losses(cls_score, rot_pred, car_cls, label_int32, quaternions,
-                                 ce_weight=None, shape_sim_mat_loss_mat=None):
+                                 ce_weight=None, shape_sim_mat=None):
     # For car classification loss, we only have classification losses
     # Or should we use sim_mat?
     device_id = cls_score.get_device()
     rois_label = Variable(torch.from_numpy(label_int32.astype('int64'))).cuda(device_id)
 
-    if len(shape_sim_mat_loss_mat):
-        if len(ce_weight):
-            coeff = shape_sim_mat_loss_mat * ce_weight
-        else:
-            coeff = shape_sim_mat_loss_mat
+    if cfg.CAR_CLS.SIM_MAT_LOSS:
+        shape_sim_mat_loss_mat = Variable(torch.from_numpy((1 - shape_sim_mat).astype('float32'))).cuda(device_id)
+        unique_modes = np.array(cfg.TRAIN.CAR_MODELS)
+        car_ids = label_int32.astype('int64')
+        loss_car_cls_total = Variable(torch.tensor(0.)).cuda(device_id)
+        for i in range(len(car_ids)):
+            pred_car_id = torch.argmax(car_cls[i])
+            gt_car_id = unique_modes[car_ids[i]]
+            loss = shape_sim_mat_loss_mat[gt_car_id, pred_car_id]
+            loss_car_cls_total += loss.sum()
 
-        loss_cls = Variable(torch.from_numpy(np.array(0)).float()).cuda(device_id)
-        for i in range(len(cls_score)):
-            coeff_car = Variable(torch.from_numpy(np.array(coeff[i])).float()).cuda(device_id)
-            loss_cls += F.cross_entropy(cls_score[i].unsqueeze(0), rois_label[i].unsqueeze(0), coeff_car)
-        loss_cls /= len(cls_score)
+            loss_cls = loss_car_cls_total / len(cls_score)
     else:
         if len(ce_weight):
             ce_weight = Variable(torch.from_numpy(np.array(ce_weight)).float()).cuda(device_id)
@@ -136,7 +152,7 @@ class roi_car_cls_rot_head(nn.Module):
 # ---------------------------------------------------------------------------- #
 # TRANS heads
 # ---------------------------------------------------------------------------- #
-def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0), ):
+def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0)):
     """Forward transform that maps proposal boxes to predicted ground-truth
     boxes using bounding-box regression deltas. See bbox_transform_inv for a
     description of the weights argument.
@@ -171,14 +187,6 @@ def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0), 
     pred_h = torch.exp(dh) * heights[:, np.newaxis]
 
     pred_boxes = torch.zeros(deltas.shape, dtype=deltas.dtype)
-    # x1
-    # pred_boxes[:, 0::4] = pred_ctr_x - 0.5 * pred_w
-    # # y1
-    # pred_boxes[:, 1::4] = pred_ctr_y - 0.5 * pred_h
-    # # x2 (note: "- 1" is correct; don't be fooled by the asymmetry)
-    # pred_boxes[:, 2::4] = pred_ctr_x + 0.5 * pred_w - 1
-    # # y2 (note: "- 1" is correct; don't be fooled by the asymmetry)
-    # pred_boxes[:, 3::4] = pred_ctr_y + 0.5 * pred_h - 1
 
     # # x1
     pred_boxes[:, 0::4] = pred_ctr_x
@@ -189,19 +197,30 @@ def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0), 
     # h (note: "- 1" is correct; don't be fooled by the asymmetry)
     pred_boxes[:, 3::4] = pred_h
 
-    # Normalise box: NOT DONE properly yet! Hard coded
+    if cfg.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC:
+        im_scale = im_info[0][-1]
+        intrinsic_vect = np.array(cfg.TRANS_HEAD.CAMERA_INTRINSIC)
+        intrinsic_vect *= im_scale
 
-    im_shape = im_info[0][:2]
-    car_shape = (120, 120)
-    pred_boxes[:, 0::4] -= (im_shape[1]/2)
-    pred_boxes[:, 0::4] /= im_shape[1]
-    pred_boxes[:, 1::4] -= (im_shape[0]/2)
-    pred_boxes[:, 1::4] /= im_shape[0]
+        pred_boxes[:, 0::4] -= intrinsic_vect[2]
+        pred_boxes[:, 0::4] /= intrinsic_vect[0]
+        pred_boxes[:, 1::4] -= intrinsic_vect[3]
+        pred_boxes[:, 1::4] /= intrinsic_vect[1]
 
-    pred_boxes[:, 2::4] -= (car_shape[0]/2)
-    pred_boxes[:, 2::4] /= car_shape[0]
-    pred_boxes[:, 3::4] -= (car_shape[1]/2)
-    pred_boxes[:, 3::4] /= car_shape[1]
+        pred_boxes[:, 2::4] /= intrinsic_vect[0]
+        pred_boxes[:, 3::4] /= intrinsic_vect[1]
+    else:
+        im_shape = im_info[0][:2]
+        car_shape = (120, 120)
+        pred_boxes[:, 0::4] -= (im_shape[1]/2)
+        pred_boxes[:, 0::4] /= im_shape[1]
+        pred_boxes[:, 1::4] -= (im_shape[0]/2)
+        pred_boxes[:, 1::4] /= im_shape[0]
+
+        pred_boxes[:, 2::4] -= (car_shape[0]/2)
+        pred_boxes[:, 2::4] /= car_shape[0]
+        pred_boxes[:, 3::4] -= (car_shape[1]/2)
+        pred_boxes[:, 3::4] /= car_shape[1]
 
     pred_boxes = pred_boxes.cuda(device_id)
     return pred_boxes
@@ -231,22 +250,100 @@ def bbox_transform_pytorch_out(boxes, im_scale, device_id):
     pred_boxes[:, 3::4] = pred_h[:, None]
 
     # Normalise box: NOT DONE properly yet! Hard coded
-    im_shape_max = np.array([2710, 3384])
-    im_shape = im_scale * im_shape_max
-    car_shape = (120, 120)
-    pred_boxes[:, 0::4] -= (im_shape[1]/2)
-    pred_boxes[:, 0::4] /= im_shape[1]
-    pred_boxes[:, 1::4] -= (im_shape[0]/2)
-    pred_boxes[:, 1::4] /= im_shape[0]
+    if cfg.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC:
+        intrinsic_vect = np.array(cfg.TRANS_HEAD.CAMERA_INTRINSIC)
+        intrinsic_vect *= im_scale
 
-    pred_boxes[:, 2::4] -= (car_shape[0]/2)
-    pred_boxes[:, 2::4] /= car_shape[0]
-    pred_boxes[:, 3::4] -= (car_shape[1]/2)
-    pred_boxes[:, 3::4] /= car_shape[1]
+        pred_boxes[:, 0::4] -= intrinsic_vect[2]
+        pred_boxes[:, 0::4] /= intrinsic_vect[0]
+        pred_boxes[:, 1::4] -= intrinsic_vect[3]
+        pred_boxes[:, 1::4] /= intrinsic_vect[1]
+
+        pred_boxes[:, 2::4] /= intrinsic_vect[0]
+        pred_boxes[:, 3::4] /= intrinsic_vect[1]
+    else:
+        im_shape_max = np.array([2710, 3384])
+        im_shape = im_scale * im_shape_max
+        car_shape = (120, 120)
+        pred_boxes[:, 0::4] -= (im_shape[1]/2)
+        pred_boxes[:, 0::4] /= im_shape[1]
+        pred_boxes[:, 1::4] -= (im_shape[0]/2)
+        pred_boxes[:, 1::4] /= im_shape[0]
+
+        pred_boxes[:, 2::4] -= (car_shape[0]/2)
+        pred_boxes[:, 2::4] /= car_shape[0]
+        pred_boxes[:, 3::4] -= (car_shape[1]/2)
+        pred_boxes[:, 3::4] /= car_shape[1]
 
     pred_boxes = Variable(torch.from_numpy(pred_boxes.astype('float32'))).cuda(device_id)
 
     return pred_boxes
+
+
+class roi_trans_head(nn.Module):
+    """Add a ReLU MLP with two hidden layers.2048 -- 1024"""
+    def __init__(self, dim_in, roi_xform_func, spatial_scale, mlp_dim_in):
+        super().__init__()
+        self.dim_in = dim_in
+        self.roi_xform = roi_xform_func
+        self.spatial_scale = spatial_scale
+        hidden_dim_1 = cfg.CAR_CLS.MLP_HEAD_DIM
+        hidden_dim_2 = cfg.TRANS_HEAD.MLP_HEAD_DIM
+        self.dim_out = cfg.TRANS_HEAD.MLP_HEAD_DIM + hidden_dim_2
+
+        roi_size = cfg.CAR_CLS.ROI_XFORM_RESOLUTION
+        self.fc_conv_1 = nn.Linear(dim_in * roi_size**2, hidden_dim_1)
+        self.fc_conv_2 = nn.Linear(hidden_dim_1, hidden_dim_2)
+
+        self.fc_mlp_1 = nn.Linear(mlp_dim_in, cfg.TRANS_HEAD.MLP_HEAD_DIM)
+        self.fc_mlp_2 = nn.Linear(cfg.TRANS_HEAD.MLP_HEAD_DIM, cfg.TRANS_HEAD.MLP_HEAD_DIM)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        mynn.init.XavierFill(self.fc_conv_1.weight)
+        init.constant_(self.fc_conv_1.bias, 0)
+        mynn.init.XavierFill(self.fc_conv_2.weight)
+        init.constant_(self.fc_conv_2.bias, 0)
+
+        mynn.init.XavierFill(self.fc_mlp_1.weight)
+        init.constant_(self.fc_mlp_1.bias, 0)
+        mynn.init.XavierFill(self.fc_mlp_2.weight)
+        init.constant_(self.fc_mlp_2.bias, 0)
+
+    def detectron_weight_mapping(self):
+        detectron_weight_mapping = {
+            'fc_conv_1.weight': 'fc_conv_1_w',
+            'fc_conv_1.bias': 'fc_conv_1_b',
+            'fc_conv_2.weight': 'fc_conv_2_b',
+            'fc_conv_2.bias': 'fc_conv_2_b',
+            'fc_mlp_1.weight': 'fc6_w',
+            'fc_mlp_1.bias': 'fc6_b',
+            'fc_mlp_2.weight': 'fc7_w',
+            'fc_mlp_2.bias': 'fc7_b'
+        }
+        return detectron_weight_mapping, []
+
+    def forward(self, x, rpn_ret, bbox):
+        x = self.roi_xform(
+            x, rpn_ret,
+            blob_rois='rois',
+            method=cfg.CAR_CLS.ROI_XFORM_METHOD,
+            resolution=cfg.CAR_CLS.ROI_XFORM_RESOLUTION,
+            spatial_scale=self.spatial_scale,
+            sampling_ratio=cfg.CAR_CLS.ROI_XFORM_SAMPLING_RATIO
+        )
+        batch_size = x.size(0)
+        x = F.relu(self.fc_conv_1(x.view(batch_size, -1)), inplace=True)
+        x = F.relu(self.fc_conv_2(x), inplace=True)
+
+        x_b = F.relu(self.fc_mlp_1(bbox.view(batch_size, -1)), inplace=True)
+        x_b = F.relu(self.fc_mlp_2(x_b), inplace=True)
+
+        x_merge = torch.cat((x, x_b), dim=1)
+
+        return x_merge
+
 
 class bbox_2mlp_head(nn.Module):
     """Add a ReLU MLP with two hidden layers."""

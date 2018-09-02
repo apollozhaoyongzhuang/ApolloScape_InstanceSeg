@@ -45,8 +45,7 @@ def pose_similarity(dt, gt, shape_sim_mat):
     q2 = gt_car_rot / np.linalg.norm(gt_car_rot, axis=1)[:, None]
 
     # diff = abs(np.matmul(q1, np.transpose(q2)))
-    diff = abs(1 - np.sum(np.square(np.tile(q1[:, None, :], [1, gt_num, 1]) -
-                                    np.tile(q2[None, :, :], [dt_num, 1, 1])), axis=2) / 2.0)
+    diff = abs(1 - np.sum(np.square(np.tile(q1[:, None, :], [1, gt_num, 1]) - np.tile(q2[None, :, :], [dt_num, 1, 1])), axis=2) / 2.0)
     dis_rot = 2 * np.arccos(diff) * 180 / np.pi
 
     if False:        #cfg.eval.eval_on:
@@ -64,15 +63,24 @@ def pose_similarity(dt, gt, shape_sim_mat):
     return sims_shape, dis_trans, dis_rot
 
 
-def shape_sim(car_cls_prop, shape_sim_mat):
+def shape_sim(car_cls_prop, shape_sim_mat, car_cls_labels_int32):
     """
 
     :param car_cls_prop: N * N_car_classes (34 or 79)
     :param shape_sim_mat: N * N_car_classes (34 or 79)
     :return:
     """
-    shape_sim = car_cls_prop * shape_sim_mat
-    return shape_sim.sum(axis=1).mean()
+    if cfg.CAR_CLS.SIM_MAT_LOSS:
+        pred_car = np.argmax(car_cls_prop, axis=1)
+        shape_sim= shape_sim_mat[car_cls_labels_int32, pred_car]
+
+    else:
+        unique_car_models = np.array(cfg.TRAIN.CAR_MODELS)
+        shape_sim_mat_34 = shape_sim_mat[unique_car_models, :][:, unique_car_models]
+        pred_car = np.argmax(car_cls_prop, axis=1)
+        shape_sim= shape_sim_mat_34[pred_car, car_cls_labels_int32]
+
+    return shape_sim.mean()
 
 
 def rot_sim(dt_car_rot, gt_car_rot):
@@ -92,7 +100,10 @@ def trans_sim(dt_car_trans, gt_car_trans, mean, std):
         dt_car_trans = dt_car_trans * std + mean
         gt_car_trans = gt_car_trans * std + mean
     dis_trans = np.linalg.norm(dt_car_trans-gt_car_trans, axis=1)
-    return dis_trans.mean()
+
+    # we also add a metric for dist<2.8 metres.
+    trans_thresh_per = np.sum(dis_trans < 2.8) / dis_trans.shape[0]
+    return dis_trans.mean(), trans_thresh_per
 
 
 def IOU(mask1, mask2):

@@ -237,6 +237,9 @@ __C.TEST.DETECTIONS_PER_IM = 100
 # detections that will slow down inference post processing steps (like NMS)
 __C.TEST.SCORE_THRESH = 0.1
 
+# The final threshold for detection acquisition
+__C.TEST.SCORE_THRESH_FOR_TRUTH_DETECTION = 0.9
+
 # Save detection results files if True
 # If false, results files are cleaned up (they can be large) after local
 # evaluation
@@ -462,9 +465,6 @@ __C.MODEL.TRANS_HEAD_ON = False
 
 # Indicates the model makes Pose car class predictions (as in Mask R-CNN for keypoints)
 __C.MODEL.ROT_HEAD_ON = False
-
-# Indicates the model makes Pose translation predictions (as in Mask R-CNN for keypoints)
-__C.MODEL.TRANS_HEAD = False
 
 # Indicates the model makes keypoint predictions (as in Mask R-CNN for
 # keypoints)
@@ -800,6 +800,8 @@ __C.CAR_CLS.ROI_XFORM_RESOLUTION = 14
 
 __C.CAR_CLS.CLS_SPECIFIC_ROT = False
 
+# Normalise quaternion output to unit length.
+__C.CAR_CLS.QUAT_NORM = True
 
 # Using Similarity matrix to reduce the car classificatin penalty: we only need their shapes to be similar
 __C.CAR_CLS.SIM_MAT_LOSS = False
@@ -823,6 +825,9 @@ __C.TRANS_HEAD.TRANS_HEAD = ''
 # INPUT DIM: bbox (x1, y1, x2, y2)
 __C.TRANS_HEAD.INPUT_DIM = 4
 
+# INPUT will also include conv body from ResNet
+__C.TRANS_HEAD.INPUT_CONV_BODY = False
+
 # Translation output DIM
 __C.TRANS_HEAD.OUTPUT_DIM = 3
 
@@ -840,6 +845,12 @@ __C.TRANS_HEAD.LOSS = 'MSE'   # ['MSE', 'L1']
 
 # Loss mulitplication coefficience
 __C.TRANS_HEAD.LOSS_BETA = 0.01
+
+# Input norm by camera intrinsic
+__C.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC = True
+
+# Input norm by camera intrinsic
+__C.TRANS_HEAD.CAMERA_INTRINSIC = (2304.54786556982, 2305.875668062, 1686.23787612802, 1354.98486439791)
 
 # Whether to normalise the Tran input
 __C.TRANS_HEAD.NORMALISE = False
