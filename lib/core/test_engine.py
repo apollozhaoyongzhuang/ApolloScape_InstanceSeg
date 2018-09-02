@@ -417,7 +417,7 @@ def test_net_Car3D(
                 if len(box_proposals) == 0:
                     continue
             else:
-                # Faster R-CNN type models generate proposals on-the-fly with an
+                #  Faster R-CNN type models generate proposals on-the-fly with an
                 # in-network RPN; 1-stage models don't require proposals.
                 box_proposals = None
 

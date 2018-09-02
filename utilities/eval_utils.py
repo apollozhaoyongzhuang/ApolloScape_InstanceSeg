@@ -49,6 +49,18 @@ def pose_similarity(dt, gt, shape_sim_mat):
                                     np.tile(q2[None, :, :], [dt_num, 1, 1])), axis=2) / 2.0)
     dis_rot = 2 * np.arccos(diff) * 180 / np.pi
 
+    if False:        #cfg.eval.eval_on:
+        if True:        #cfg.eval.sims_shape:  False  True
+            #sims_shape = np.ones(sims_shape.shape, dtype=np.float)
+            sim = np.linspace(1, 0.95, sims_shape.shape[1], endpoint=True)
+            sims_shape = np.tile(sim, [dt_num, 1])
+
+        if True:        #cfg.eval.dis_trans:
+            dis_trans = np.zeros(dis_trans.shape, dtype=np.float)
+
+        if True:        #cfg.eval.dis_rot:
+            dis_rot = np.zeros(dis_rot.shape, dtype=np.float)
+
     return sims_shape, dis_trans, dis_rot
 
 

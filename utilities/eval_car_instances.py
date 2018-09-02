@@ -236,10 +236,10 @@ class Detect3DEval(object):
                     m = -1
                     for gind, g in enumerate(gt):
                         # if this gt already matched, continue
-                        if gtm[tind, gind] > 0:
+                        if gtm[tind, gind] > 0:  #该GT已经被匹配
                             continue
                         # if dt matched to reg gt, and on ignore gt, stop
-                        if m > -1 and gtIg[m] == 0 and gtIg[gind] == 1:
+                        if m > -1 and gtIg[m] == 0 and gtIg[gind] == 1: #
                             break
 
                         # continue to next gt unless better match made

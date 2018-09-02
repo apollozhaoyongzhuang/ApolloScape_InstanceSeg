@@ -1,12 +1,8 @@
 import argparse
 import os
-<<<<<<< HEAD
+
 # os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-=======
-#os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
-os.environ['CUDA_VISIBLE_DEVICES'] = '2'
->>>>>>> update_stream/master
 
 import sys
 import pickle
@@ -68,17 +64,9 @@ def parse_args():
     parser.add_argument('--resume', default=False, help='resume to training on a checkpoint', action='store_true')
     parser.add_argument('--no_save', help='do not save anything', action='store_true')
     #parser.add_argument('--load_ckpt', default=None, help='checkpoint path to load')
-<<<<<<< HEAD
+
     parser.add_argument('--load_ckpt', default='/home/wudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step89999.pth', help='checkpoint path to load')
-=======
 
-    parser.add_argument('--load_ckpt', default='/home/wudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step30855.pth', help='checkpoint path to load')
-
-    #parser.add_argument('--load_ckpt', default='/home/stevenwudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step89999.pth', help='checkpoint path to load')
-    #parser.add_argument('--load_ckpt', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Aug27-00-08-02_n606_step/ckpt/model_step35399.pth', help='checkpoint path to load')
-    #parser.add_argument('--load_ckpt', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Aug27-12-15-44_n606_step/ckpt/model_step8399.pth', help='checkpoint path to load')
-
->>>>>>> update_stream/master
 
     parser.add_argument('--load_detectron', help='path to the detectron weight pickle file')
     parser.add_argument('--use_tfboard', default=True, help='Use tensorflow tensorboard to log training info', action='store_true')
@@ -284,7 +272,8 @@ def main():
 
     ### Training Setups ###
     args.run_name = misc_utils.get_run_name() + '_step'
-    output_dir = misc_utils.get_output_dir(args, args.run_name)
+    output_dir = os.path.join('/media/samsumg_1tb/zzy/ApolloScape/ECCV2018_apollo/train', args.run_name)
+    # output_dir = misc_utils.get_output_dir(args, args.run_name)
     args.cfg_filename = os.path.basename(args.cfg_file)
 
     if not args.no_save:
