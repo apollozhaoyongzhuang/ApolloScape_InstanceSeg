@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 from torch.autograd import Variable
+import utils.net as net_utils
 
 from core.config import cfg
 import nn as mynn
@@ -94,9 +95,21 @@ def fast_rcnn_car_cls_rot_losses(cls_score, rot_pred, car_cls, label_int32, quat
 
     # loss rot
     quaternions = Variable(torch.from_numpy(quaternions.astype('float32'))).cuda(device_id)
-    loss_rot = torch.abs(rot_pred - quaternions)
-    N = loss_rot.size(0)  # batch size
-    loss_rot = loss_rot.view(-1).sum(0) / N
+
+    if cfg.CAR_CLS.ROT_LOSS == 'L1':
+        loss_rot = torch.abs(rot_pred - quaternions)
+        N = loss_rot.size(0)  # batch size
+        loss_rot = loss_rot.view(-1).sum(0) / N
+    elif cfg.CAR_CLS.ROT_LOSS == 'MSE':
+        loss_rot = (rot_pred - quaternions) ** 2
+        N = loss_rot.size(0)  # batch size
+        loss_rot = loss_rot.view(-1).sum(0) / N
+    elif cfg.CAR_CLS.ROT_LOSS == 'ARCCOS':
+        pi = Variable(torch.tensor([np.pi]).to(torch.float32)).cuda(device_id)
+        diff = torch.abs((rot_pred * quaternions).sum(dim=1))
+        loss_rot = 2 * torch.acos(diff) * 180 / pi
+        N = diff.size(0)  # batch size
+        loss_rot = loss_rot.view(-1).sum(0) / N
     return loss_cls, loss_rot, accuracy_cls
 
 
@@ -411,32 +424,136 @@ def car_trans_losses(trans_pred, label_trans):
     label_trans = Variable(torch.from_numpy(label_trans.astype('float32'))).cuda(device_id)
 
     # loss rot
-    N = trans_pred.shape[0]
+
     if cfg.TRANS_HEAD.LOSS == 'MSE':
         loss = nn.MSELoss()
         loss_trans = loss(trans_pred, label_trans)
     elif cfg.TRANS_HEAD.LOSS == 'L1':
+        N = trans_pred.shape[0]
         loss_trans = torch.abs(trans_pred - label_trans)
-    loss_trans = loss_trans.view(-1).sum(0) / N
+        loss_trans = loss_trans.view(-1).sum(0) / N
+    elif cfg.TRANS_HEAD.LOSS == 'HUBER':
+        loss_trans = net_utils.huber_loss(trans_pred, label_trans, device_id)
     return loss_trans
 
 
-def infer_car_3d_translation(pred_boxes_car, car_model, quaternions_gt, quaternions_dt, rpn_ret):
-    from matplotlib import pyplot as plt
-    import cv2
-    image_file = '/media/SSD_1TB/ApolloScape/ECCV2018_apollo/train/images/180310_025828603_Camera_5.jpg'
-    image = cv2.imread(image_file, cv2.IMREAD_UNCHANGED)[:, :, ::-1]
+# def infer_car_3d_translation(pred_boxes_car, car_model, quaternions_gt, quaternions_dt, rpn_ret):
+#     from matplotlib import pyplot as plt
+#     import cv2
+#     image_file = '/media/SSD_1TB/ApolloScape/ECCV2018_apollo/train/images/180310_025828603_Camera_5.jpg'
+#     image = cv2.imread(image_file, cv2.IMREAD_UNCHANGED)[:, :, ::-1]
+#
+#     intrinsic = np.array(
+#                 [2304.54786556982, 2305.875668062,
+#                  1686.23787612802, 1354.98486439791]),
+#     image, intrinsic_mat = self.rescale(image, intrinsic)
+#     im_shape = image.shape
+#     mask_all = np.zeros(im_shape)
+#
+#     for i, car_pose in enumerate(car_poses):
+#         car_name = car_models.car_id2name[car_pose['car_id']].name
+#         mask = self.render_car(car_pose['pose'], car_name, im_shape)
+#         mask_all += mask
+#
+#     return image
+#
+#
+def plane_projection(car_trans_pred, rot_pred, car_ids, im_info, car_models, intrinsic_mat, car_names):
+    device_id = car_trans_pred.get_device()
+    assert (rot_pred.get_device() == device_id)
+    # Get R* XYZ + T point
+    fx, fy, cx, cy = extract_intrinsic_from_mat(intrinsic_mat, device_id)
+    for i, car_id in enumerate(car_ids):
+        car_name = car_names[int(car_id)]
+        vertices = car_models[car_name]['vertices']
+        vertices = Variable(torch.from_numpy(vertices.astype('float32'))).cuda(device_id)
+        rotation_matrix = quaternion_to_rotation_mat_pytorch(rot_pred[i]).cuda(device_id)
+        x_y_z_R = torch.mm(rotation_matrix, torch.t(vertices))
+        x_y_z_R_T = x_y_z_R + car_trans_pred[i].unsqueeze_(-1)
 
-    intrinsic = np.array(
-                [2304.54786556982, 2305.875668062,
-                 1686.23787612802, 1354.98486439791]),
-    image, intrinsic_mat = self.rescale(image, intrinsic)
-    im_shape = image.shape
-    mask_all = np.zeros(im_shape)
+        x_y_z_R_T[0, :] /= x_y_z_R_T[2, :]
+        x_y_z_R_T[1, :] /= x_y_z_R_T[2, :]
+        U = fx * x_y_z_R_T[0, :] + cx
+        V = fy * x_y_z_R_T[1, :] + cy
 
-    for i, car_pose in enumerate(car_poses):
-        car_name = car_models.car_id2name[car_pose['car_id']].name
-        mask = self.render_car(car_pose['pose'], car_name, im_shape)
-        mask_all += mask
+        u = U.cpu().data.numpy()
+        v = V.cpu().data.numpy()
+        from matplotlib import pyplot as plt
+        plt.scatter(u, v)
+        vertices_vector = np.c_[vertices, np.ones(vertices.shape[0])]
+        vertices_pytorch = Variable(torch.from_numpy(vertices_vector.astype('float32'))).cuda(device_id)
+        intrinsic_mat_pytorch = Variable(torch.from_numpy(intrinsic_mat.astype('float32'))).cuda(device_id)
+        perspective_transform_matrix = torch.cat((rotation_matrix, car_trans_pred[i].unsqueeze_(-1)), dim=1)
+        # Get 2D Projection points using camera intrinsics
+        UV = torch.mm(torch.mm(intrinsic_mat_pytorch, perspective_transform_matrix), torch.t(vertices_pytorch))
 
-    return image
+    return UV
+
+
+def quaternion_to_rotation_mat_pytorch(rot_pred):
+    """
+    predicted quaternions to rotation matrix:
+    :param rot_pred: N * 4
+    :return: rotation matrix N * 3 * 3
+    """
+    roll, pitch, yaw = quaternion_to_euler_angle_pytorch(rot_pred)
+
+    rollMatrix = torch.tensor([
+        [1, 0, 0],
+        [0, torch.cos(roll), -torch.sin(roll)],
+        [0, torch.sin(roll), torch.cos(roll)]])
+
+    pitchMatrix = torch.tensor([
+        [torch.cos(pitch), 0, torch.sin(pitch)],
+        [0, 1, 0],
+        [-torch.sin(pitch), 0, torch.cos(pitch)]])
+
+    yawMatrix = torch.tensor([
+        [torch.cos(yaw), -torch.sin(yaw), 0],
+        [torch.sin(yaw), torch.cos(yaw), 0],
+        [0, 0, 1]])
+
+    R = yawMatrix * pitchMatrix * rollMatrix
+
+    return R
+
+
+def quaternion_to_euler_angle_pytorch(rot_pred):
+    """Convert quaternion to euler angel.
+    Input:
+        rot_pred: 1 * 4 pytorch tensor vector,
+    Output:
+        angle: 1 x 3 vector, each row is [roll, pitch, yaw]
+    """
+    w, x, y, z = rot_pred
+
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    X = torch.atan2(t0, t1)
+
+    t2 = +2.0 * (w * y - z * x)
+    t2 = torch.clamp(t2, -1., 1)
+    Y = torch.asin(t2)
+
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    Z = torch.atan2(t3, t4)
+
+    return X, Y, Z
+
+
+def get_perspective_transform(rotation_matrix, car_trans_pred):
+    torch.cat((rotation_matrix, car_trans_pred), dim=1)
+
+
+def extract_intrinsic_from_mat(intrinsic_mat, device_id):
+    fx = intrinsic_mat[0][0]
+    fy = intrinsic_mat[1][1]
+    cx = intrinsic_mat[0][2]
+    cy = intrinsic_mat[1][2]
+
+    fx = Variable(torch.tensor([fx]).to(torch.float32)).cuda(device_id)
+    fy = Variable(torch.tensor([fy]).to(torch.float32)).cuda(device_id)
+    cx = Variable(torch.tensor([cx]).to(torch.float32)).cuda(device_id)
+    cy = Variable(torch.tensor([cy]).to(torch.float32)).cuda(device_id)
+    return fx, fy, cx, cy
