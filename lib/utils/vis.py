@@ -532,7 +532,7 @@ def write_pose_to_json(im_name, output_dir, boxes, car_cls_prob, euler_angle, tr
             if iou <= iou_ignore_threshold:
                 car_info = dict()
                 car_info["car_id"] = int(car_model_i)
-                car_info["pose"] = [float(x) for x in euler_angle_i] + [float(x) for x in trans_pred_i]
+                car_info["pose"] = [[float(x) for x in euler_angle_i]] + [float(x) for x in trans_pred_i]
                 car_info["area"] = dt_area
                 car_info["score"] = float(score)
                 car_list.append(car_info)

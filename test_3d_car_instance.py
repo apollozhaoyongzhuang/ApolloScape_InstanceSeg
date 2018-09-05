@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--multi-gpu-testing', help='using multiple gpus for inference', default=False, action='store_true')
     parser.add_argument('--vis', default=False,  dest='vis', help='visualize detections', action='store_true')
     parser.add_argument('--list_flag', default='test', help='Choosing between [val, test]')
-    parser.add_argument('--iou_ignore_threshold', default=0.9, help='Filter out by this iou')
+    parser.add_argument('--iou_ignore_threshold', default=0.5, help='Filter out by this iou')
 
 
     return parser.parse_args()
