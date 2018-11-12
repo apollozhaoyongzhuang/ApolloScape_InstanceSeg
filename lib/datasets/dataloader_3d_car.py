@@ -106,13 +106,24 @@ class Car3D(WAD_CVPR2018):
         :param roads: road indices, currently we used only [1,2,3] but 4 will also feasible
         :return:
         """
+        if list_flag == 'test':
+            self.data_dir = self.data_dir[:-6] + 'test/'
+            im_dir = self.data_dir + 'images/'
+            im_list = os.listdir(im_dir)
+            self.train_list_all = [x[:-4] for x in im_list]
+        else:
+            train_list_all = [line.rstrip('\n')[:-4] for line in open(os.path.join(self.data_dir, 'split',  list_flag + '.txt'))]
+            valid_list_all = []
+            if with_valid:
+                valid_list_all = [line.rstrip('\n')[:-4] for line in open(os.path.join(self.data_dir, 'split', 'val.txt'))]
 
-        train_list_all = [line.rstrip('\n')[:-4] for line in open(os.path.join(self.data_dir, 'split',  list_flag + '.txt'))]
-        valid_list_all = []
-        if with_valid:
-            valid_list_all = [line.rstrip('\n')[:-4] for line in open(os.path.join(self.data_dir, 'split', 'val.txt'))]
+            # The Following list of images are noisy images that should be deleted:
+            train_list_delete = [line.rstrip('\n') for line in open(os.path.join(self.data_dir, 'split',  'Mesh_overlay_train_error _delete.txt'))]
+            val_list_delete = [line.rstrip('\n') for line in open(os.path.join(self.data_dir, 'split',  'Mesh_overlay_val_error_delete.txt'))]
+            noisy_list = train_list_delete + val_list_delete
+            print("Train delete %d images, val delete %d images." % (len(train_list_delete), len(val_list_delete)))
 
-        self.train_list_all = train_list_all + valid_list_all
+            self.train_list_all = [x for x in train_list_all + valid_list_all if x not in noisy_list]
         return self.train_list_all
 
     def load_car_models(self):
@@ -131,7 +142,7 @@ class Car3D(WAD_CVPR2018):
             self.car_models[model.name]['vertices'][:, [0, 1]] *= -1
         return self.car_models
 
-    def get_intrinsic_mat(self, image_name):
+    def get_intrinsic_mat(self):
         #intrinsic = self.dataset.get_intrinsic(image_name)
         # Intrinsic should always use camera 5
         intrinsic = self.dataset.get_intrinsic('Camera_5')

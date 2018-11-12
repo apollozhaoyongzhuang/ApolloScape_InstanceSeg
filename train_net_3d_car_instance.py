@@ -1,7 +1,14 @@
 import argparse
 import os
+<<<<<<< HEAD
 #os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
 os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+=======
+
+#os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
+>>>>>>> 9cb42a63e1c7277961389225366bd86f4ab51df0
 
 import sys
 import pickle
@@ -43,11 +50,19 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a X-RCNN network')
 
     parser.add_argument('--dataset', dest='dataset', default='ApolloScape', help='Dataset to use')
-    parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN.yaml', help='Config file for training (and optionally testing)')
+    #parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN.yaml', help='Config file for training (and optionally testing)')
+    parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_3d_2d.yaml', help='Config file for training (and optionally testing)')
+    #parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_trans_conv_head.yaml', help='Config file for training (and optionally testing)')
+    #parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_trans_conv_head_3d_2d_loss.yaml', help='Config file for training (and optionally testing)')
+
     parser.add_argument('--set', dest='set_cfgs', help='Set config keys. Key value sequence seperate by whitespace.''e.g. [key] [value] [key] [value]', default=[], nargs='+')
     parser.add_argument('--disp_interval', help='Display training info every N iterations', default=20, type=int)
     parser.add_argument('--no_cuda', dest='cuda', help='Do not use CUDA device', action='store_false')
-    parser.add_argument('--dataset_dir', default='/media/SSD_1TB/ApolloScape/ECCV2018_apollo/train')
+    parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/ApolloScape/ECCV2018_apollo/train')
+
+    parser.add_argument('--output_dir', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg''')
+
+
     # Optimization
     # These options has the highest prioity and can overwrite the values in config file or values set by set_cfgs. `None` means do not overwrite.
     parser.add_argument('--bs', dest='batch_size', help='Explicitly specify to overwrite the value comed from cfg_file.', type=int)
@@ -63,7 +78,16 @@ def parse_args():
     parser.add_argument('--resume', default=False, help='resume to training on a checkpoint', action='store_true')
     parser.add_argument('--no_save', help='do not save anything', action='store_true')
     #parser.add_argument('--load_ckpt', default=None, help='checkpoint path to load')
-    parser.add_argument('--load_ckpt', default='/home/stevenwudi/PycharmProjects/ApolloScape_InstanceSeg/Outputs/e2e_3d_car_101_FPN/Aug23-23-19-14_N606-TITAN32_step/ckpt/model_step89999.pth', help='checkpoint path to load')
+
+    parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Aug31-11-41-25_N606-TITAN32_step/ckpt/model_step85385.pth', help='checkpoint path to load')
+
+    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Sep02-00-16-19_n606_step/ckpt/model_step61312.pth', help='checkpoint path to load')
+    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep02-12-03-23_N606-TITAN32_step/ckpt/model_step72750.pth', help='checkpoint path to load')
+    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep04-00-18-30_n606_step/ckpt/model_step29999.pth', help='checkpoint path to load')
+
+    #parser.add_argument('--ckpt_ignore_head', default=['car_trans_Outs'], help='heads parameters will be ignored during loading')
+    parser.add_argument('--ckpt_ignore_head', default=[], help='heads parameters will be ignored during loading')
+
 
     parser.add_argument('--load_detectron', help='path to the detectron weight pickle file')
     parser.add_argument('--use_tfboard', default=True, help='Use tensorflow tensorboard to log training info', action='store_true')
@@ -107,13 +131,16 @@ def main():
     merge_cfg_from_file(args.cfg_file)
 
     # Some manual adjustment for the ApolloScape dataset parameters here
+    cfg.OUTPUT_DIR = args.output_dir
     cfg.TRAIN.DATASETS = 'Car3D'
     cfg.MODEL.NUM_CLASSES = 8
-    cfg.MODEL.NUMBER_CARS = 34
-    #cfg.TRAIN.MIN_AREA = 49   # 7*7
+    if cfg.CAR_CLS.SIM_MAT_LOSS:
+        cfg.MODEL.NUMBER_CARS = 79
+    else:
+        # Loss is only cross entropy, hence, we detect only car categories in the training set.
+        cfg.MODEL.NUMBER_CARS = 34
     cfg.TRAIN.MIN_AREA = 196   # 14*14
     cfg.TRAIN.USE_FLIPPED = False  # Currently I don't know how to handle the flipped case
-    cfg.SOLVER.BASE_LR = 0.005
     cfg.TRAIN.IMS_PER_BATCH = 1
 
     cfg.NUM_GPUS = torch.cuda.device_count()
@@ -177,7 +204,11 @@ def main():
 
     ### Dataset ###
     timers['roidb'].tic()
-    roidb, ratio_list, ratio_index = combined_roidb_for_training(cfg.TRAIN.DATASETS, args.dataset_dir)
+    if cfg.MODEL.LOSS_3D_2D_ON:
+        roidb, ratio_list, ratio_index, ds = combined_roidb_for_training(cfg.TRAIN.DATASETS, args.dataset_dir)
+    else:
+        roidb, ratio_list, ratio_index = combined_roidb_for_training(cfg.TRAIN.DATASETS, args.dataset_dir)
+
     timers['roidb'].toc()
     roidb_size = len(roidb)
     logger.info('{:d} roidb entries'.format(roidb_size))
@@ -192,7 +223,7 @@ def main():
         cfg.MODEL.NUM_CLASSES,
         training=True,
         valid_keys=['has_visible_keypoints', 'boxes', 'seg_areas', 'gt_classes', 'gt_overlaps', 'box_to_gt_ind_map',
-                    'is_crowd', 'car_cat_classes', 'poses', 'quaternions'])
+                    'is_crowd', 'car_cat_classes', 'poses', 'quaternions', 'im_info'])
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -203,7 +234,10 @@ def main():
     dataiterator = iter(dataloader)
 
     ### Model ###
-    maskRCNN = Generalized_RCNN()
+    if cfg.MODEL.LOSS_3D_2D_ON:
+        maskRCNN = Generalized_RCNN(ds.Car3D)
+    else:
+        maskRCNN = Generalized_RCNN()
 
     if cfg.CUDA:
         maskRCNN.cuda()
@@ -241,7 +275,7 @@ def main():
         load_name = args.load_ckpt
         logging.info("loading checkpoint %s", load_name)
         checkpoint = torch.load(load_name, map_location=lambda storage, loc: storage)
-        net_utils.load_ckpt(maskRCNN, checkpoint['model'])
+        net_utils.load_ckpt(maskRCNN, checkpoint['model'], ignore_list=args.ckpt_ignore_head)
         if args.resume:
             args.start_step = checkpoint['step'] + 1
             if 'train_size' in checkpoint:  # For backward compatibility
@@ -269,7 +303,8 @@ def main():
 
     ### Training Setups ###
     args.run_name = misc_utils.get_run_name() + '_step'
-    output_dir = misc_utils.get_output_dir(args, args.run_name)
+    output_dir = os.path.join('/media/samsumg_1tb/zzy/ApolloScape/ECCV2018_apollo/train', args.run_name)
+    # output_dir = misc_utils.get_output_dir(args, args.run_name)
     args.cfg_filename = os.path.basename(args.cfg_file)
 
     if not args.no_save:
@@ -314,9 +349,9 @@ def main():
                 elif method == 'linear':
                     alpha = step / cfg.SOLVER.WARM_UP_ITERS
                     warmup_factor = cfg.SOLVER.WARM_UP_FACTOR * (1 - alpha) + alpha
-                    # warmup_factor_trans = cfg.SOLVER.WARM_UP_FACTOR_TRANS * (1 - alpha) + alpha
-                    # warmup_factor_trans *= cfg.TRANS_HEAD.LOSS_BETA
-                    warmup_factor_trans = 1.0
+                    warmup_factor_trans = cfg.SOLVER.WARM_UP_FACTOR_TRANS * (1 - alpha) + alpha
+                    warmup_factor_trans *= cfg.TRANS_HEAD.LOSS_BETA
+                    #warmup_factor_trans = 1.0
                 else:
                     raise KeyError('Unknown SOLVER.WARM_UP_METHOD: {}'.format(method))
                 lr_new = cfg.SOLVER.BASE_LR * warmup_factor
@@ -352,16 +387,19 @@ def main():
                         input_data[key] = list(map(Variable, input_data[key]))
 
                 net_outputs = maskRCNN(**input_data)
-                net_outputs['losses']['loss_trans'] *= warmup_factor_trans
 
-                # training_stats.UpdateIterStats(net_outputs, inner_iter)
+                net_outputs['losses']['loss_rot'] *= cfg.CAR_CLS.ROT_LOSS_BETA
                 training_stats.UpdateIterStats_car_3d(net_outputs)
-                #loss = net_outputs['total_loss']
                 # start training
                 # loss_car_cls: 2.233790, loss_rot: 0.296853, loss_trans: ~100
                 loss = net_outputs['losses']['loss_car_cls'] +\
-                       net_outputs['losses']['loss_rot'] +\
-                       net_outputs['losses']['loss_trans']
+                       net_outputs['losses']['loss_rot']
+                if cfg.MODEL.TRANS_HEAD_ON:
+                    if cfg.MODEL.TRANS_HEAD_ON:
+                        net_outputs['losses']['loss_trans'] *= warmup_factor_trans
+                    loss += net_outputs['losses']['loss_trans']
+                if cfg.MODEL.LOSS_3D_2D_ON:
+                    loss += net_outputs['losses']['UV_projection_loss']
                 loss.backward()
             optimizer.step()
             training_stats.IterToc()

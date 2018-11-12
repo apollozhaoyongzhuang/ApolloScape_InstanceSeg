@@ -237,6 +237,9 @@ __C.TEST.DETECTIONS_PER_IM = 100
 # detections that will slow down inference post processing steps (like NMS)
 __C.TEST.SCORE_THRESH = 0.1
 
+# The final threshold for detection acquisition
+__C.TEST.SCORE_THRESH_FOR_TRUTH_DETECTION = 0.9
+
 # Save detection results files if True
 # If false, results files are cleaned up (they can be large) after local
 # evaluation
@@ -460,11 +463,9 @@ __C.MODEL.CAR_CLS_HEAD_ON = False
 # Indicates the model makes 3d car translation predictions
 __C.MODEL.TRANS_HEAD_ON = False
 
-# Indicates the model makes Pose car class predictions (as in Mask R-CNN for keypoints)
-__C.MODEL.ROT_HEAD_ON = False
+# Indicates the model use 3D to 2D projection error for multi-loss
+__C.MODEL.LOSS_3D_2D_ON = False
 
-# Indicates the model makes Pose translation predictions (as in Mask R-CNN for keypoints)
-__C.MODEL.TRANS_HEAD = False
 
 # Indicates the model makes keypoint predictions (as in Mask R-CNN for
 # keypoints)
@@ -800,10 +801,26 @@ __C.CAR_CLS.ROI_XFORM_RESOLUTION = 14
 
 __C.CAR_CLS.CLS_SPECIFIC_ROT = False
 
+# Normalise quaternion output to unit length.
+__C.CAR_CLS.QUAT_NORM = True
 
 # Using Similarity matrix to reduce the car classificatin penalty: we only need their shapes to be similar
 __C.CAR_CLS.SIM_MAT_LOSS = False
 
+
+# Normalise quaternion output to unit length.
+__C.CAR_CLS.ROT_LOSS = 'L1'  # ['MSE', 'L1', 'ARCCOS', 'HUBER']
+
+# Rotational Huber treshold: we care more about the inside, stabilise the learning process
+__C.CAR_CLS.ROT_HUBER_THRESHOLD = 5
+
+# Rotational loss multiplication coefficient
+__C.CAR_CLS.ROT_LOSS_BETA = 1.0
+
+# For rotation clipping
+# Translation Mean DIM
+__C.CAR_CLS.ROT_MIN = (-3.14052, -1.55991,  -3.14159)
+__C.CAR_CLS.ROT_MAX = (1.1784,    1.55723,   3.14158)
 
 # ---------------------------------------------------------------------------- #
 # CAR_TRANS options, for predicting the car pose translation (x,y,z)
@@ -819,6 +836,9 @@ __C.TRANS_HEAD.TRANS_HEAD = ''
 # INPUT DIM: bbox (x1, y1, x2, y2)
 __C.TRANS_HEAD.INPUT_DIM = 4
 
+# INPUT will also include conv body from ResNet
+__C.TRANS_HEAD.INPUT_CONV_BODY = False
+
 # Translation output DIM
 __C.TRANS_HEAD.OUTPUT_DIM = 3
 
@@ -832,10 +852,34 @@ __C.TRANS_HEAD.TRANS_MEAN = (-3.756, 9.9432, 54.044)
 __C.TRANS_HEAD.TRANS_STD = (15.005, 7.0902, 41.8559)
 
 # Translation output DIM
-__C.TRANS_HEAD.LOSS = 'MSE'   # ['MSE', 'L1']
+__C.TRANS_HEAD.LOSS = 'MSE'   # ['MSE', 'L1', 'HUBER']
+
+# Translation Huber treshold: we care more about the inside, stabilise the learning process
+__C.TRANS_HEAD.TRANS_HUBER_THRESHOLD = 2.8
 
 # Loss mulitplication coefficience
 __C.TRANS_HEAD.LOSS_BETA = 0.01
+
+# Input norm by camera intrinsic
+__C.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC = True
+
+# Input norm by camera intrinsic
+__C.TRANS_HEAD.CAMERA_INTRINSIC = (2304.54786556982, 2305.875668062, 1686.23787612802, 1354.98486439791)
+
+# Whether to normalise the Tran input
+__C.TRANS_HEAD.NORMALISE = False
+
+# ---------------------------------------------------------------------------- #
+# CAR3D loss: using 3D to 2D projection to generate loss, unifying the learning process
+# ---------------------------------------------------------------------------- #
+__C.LOSS_3D_2D = AttrDict()
+
+# During the mesh generation, using GT(True) or predicted(False) Car ID
+__C.LOSS_3D_2D.MESH_GEN_USING_GT = True
+
+# 2D projection error
+__C.LOSS_3D_2D.PROJECTION_LOSS = 'L1'
+
 # ---------------------------------------------------------------------------- #
 # Mask R-CNN options ("MRCNN" means Mask R-CNN)
 # ---------------------------------------------------------------------------- #

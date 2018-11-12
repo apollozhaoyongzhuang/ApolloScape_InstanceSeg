@@ -194,7 +194,7 @@ class JsonDataset(object):
                 roidb = []
                 for entry in image_ids:
                     roidb.append(self._prep_roidb_entry_Car3D(entry))
-            if gt:
+            if gt and not list_flag == 'test':
                 self.debug_timer.tic()
                 for entry in tqdm(roidb):
                     if self.dataset_name == 'coco_2017_train':
@@ -208,9 +208,7 @@ class JsonDataset(object):
 
                 logger.debug('_add_gt_annotations took {:.3f}s'.format(self.debug_timer.toc(average=False)))
 
-                if list_flag is not 'train':
-                    cache_filepath = cache_filepath[:-4] + '_' + list_flag + cache_filepath[-4:]
-                elif cfg.TRAIN.USE_FLIPPED:
+                if cfg.TRAIN.USE_FLIPPED and not list_flag == 'val':
                     logger.info('Appending horizontally-flipped training examples...')
                     extend_with_flipped_entries(roidb)
                 logger.info('Loaded dataset: {:s}'.format(self.name + '_' + list_flag))
@@ -559,7 +557,7 @@ class JsonDataset(object):
         entry['height'] = self.Car3D.image_shape[0]
         entry['width'] = self.Car3D.image_shape[1]
 
-        intrinsic_mat = self.Car3D.get_intrinsic_mat(entry_id)
+        intrinsic_mat = self.Car3D.get_intrinsic_mat()
         # Sanitize bboxes -- some are invalid
         valid_objs = []
         for i, car_pose in enumerate(car_poses):
