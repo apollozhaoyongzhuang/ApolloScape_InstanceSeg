@@ -412,22 +412,22 @@ def vis_one_image_eccv2018_car_3d(
                     color='white')
 
             # Show predicted pos mesh here:
-            if trans_pred_i is not None and euler_angle_i is not None:
-                #euler_angle = quaternion_to_euler_angle(rot_pred_i)
-                pose = np.concatenate((euler_angle_i, trans_pred_i))
-                car_name = car_model_name_i.name
-                car = car_models[car_name]
-                pose = np.array(pose)
-                # project 3D points to 2d image plane
-                rmat = euler_angles_to_rotation_matrix(pose[:3])
-                rvect, _ = cv2.Rodrigues(rmat)
-                imgpts, jac = cv2.projectPoints(np.float32(car['vertices']), rvect, pose[3:], intrinsic, distCoeffs=None)
-                triangles = np.array(car['faces']-1).astype('int64')
-                x = np.squeeze(imgpts[:, :, 1])
-                y = np.squeeze(imgpts[:, :, 0])
-                triangles = triangles
-                color_mask = color_list[mask_color_id % len(color_list), 0:3]
-                ax.triplot(y, x, triangles, alpha=0.8, linewidth=1.2, color=color_mask)
+            # if trans_pred_i is not None and euler_angle_i is not None:
+            #     #euler_angle = quaternion_to_euler_angle(rot_pred_i)
+            #     pose = np.concatenate((euler_angle_i, trans_pred_i))
+            #     car_name = car_model_name_i.name
+            #     car = car_models[car_name]
+            #     pose = np.array(pose)
+            #     # project 3D points to 2d image plane
+            #     rmat = euler_angles_to_rotation_matrix(pose[:3])
+            #     rvect, _ = cv2.Rodrigues(rmat)
+            #     imgpts, jac = cv2.projectPoints(np.float32(car['vertices']), rvect, pose[3:], intrinsic, distCoeffs=None)
+            #     triangles = np.array(car['faces']-1).astype('int64')
+            #     x = np.squeeze(imgpts[:, :, 1])
+            #     y = np.squeeze(imgpts[:, :, 0])
+            #     triangles = triangles
+            #     color_mask = color_list[mask_color_id % len(color_list), 0:3]
+            #     ax.triplot(y, x, triangles, alpha=0.8, linewidth=1.2, color=color_mask)
         # show mask
         if segms is not None and len(segms) > i:
             img = np.ones(im.shape)
@@ -525,19 +525,37 @@ def write_pose_to_json(im_name, output_dir, boxes, car_cls_prob, euler_angle, tr
 
         if class_string == 'car':
             # filter out by ignored_mask_binary
-            dt_mask = masks[:, :, i]
-            dt_area = int(dt_mask.sum())
-            iou_mask = dt_mask * ignored_mask_binary
-            iou = np.sum(iou_mask) / dt_area
-            if iou <= iou_ignore_threshold:
-                car_info = dict()
-                car_info["car_id"] = int(car_model_i)
-                car_info["pose"] = [[float(x) for x in euler_angle_i]] + [float(x) for x in trans_pred_i]
-                car_info["area"] = dt_area
-                car_info["score"] = float(score)
-                car_list.append(car_info)
+
+            # dt_mask = masks[:, :, i]
+            # dt_area = int(dt_mask.sum())
+            # iou_mask = dt_mask * ignored_mask_binary
+            # iou = np.sum(iou_mask) / dt_area
+            # if iou <= iou_ignore_threshold:
+            #     car_info = dict()
+            #     car_info["car_id"] = int(car_model_i)
+            #     car_info["pose"] = [[float(x) for x in euler_angle_i]] + [float(x) for x in trans_pred_i]
+            #     car_info["area"] = dt_area
+            #     car_info["score"] = float(score)
+            #     car_list.append(car_info)
+
+            car_info = dict()
+            car_info["car_id"] = int(car_model_i)
+            car_info["pose"] = [float(x) for x in euler_angle_i] + [float(x) for x in trans_pred_i]
+            # We use rectangle area
+            car_info["area"] = int(areas[i])
+            car_info["score"] = float(score)
+            if iou_ignore_threshold:
+                masks = np.zeros_like(ignored_mask_binary)
+                masks[int(boxes[i][1]):int(boxes[i][3]), int(boxes[i][0]): int(boxes[i][2])] = 1
+                iou_mask = masks * ignored_mask_binary
+                iou = np.sum(iou_mask) / int(areas[i])
+                if iou <= iou_ignore_threshold:
+                    car_list.append(car_info)
+                else:
+                    print('This mask has been ignored')
+
             else:
-                print('This mask has been ignored')
+                car_list.append(car_info)
 
     with open(json_file, 'w') as outfile:
         json.dump(car_list, outfile, indent=4)

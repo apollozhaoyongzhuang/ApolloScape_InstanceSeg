@@ -1,7 +1,7 @@
 import argparse
 import os
-
-
+os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
+#os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import sys
 import pickle
@@ -29,10 +29,6 @@ from utils.logging import setup_logging
 from utils.timer import Timer
 from utils.training_stats import TrainingStats
 
-
-#os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-
 # Set up logging and load config options
 logger = setup_logging(__name__)
 logging.getLogger('roi_data.loader').setLevel(logging.INFO)
@@ -46,33 +42,15 @@ def parse_args():
     """Parse input arguments"""
     parser = argparse.ArgumentParser(description='Train a X-RCNN network')
     # The following cfg and ckpt will be changed accordingly.
-    # parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_triple_head_freeze_body_local_weighted.yaml', help='Config file for training (and optionally testing)')
-    # parser.add_argument('--cfg', dest='cfg_file',
-    #                     default='./configs/e2e_3d_car_101_FPN_triple_head_freeze_body_non_local_weighted.yaml',
-    #                     help='Config file for training (and optionally testing)')
-    parser.add_argument('--cfg', dest='cfg_file',
-                        default='./configs/e2e_3d_car_101_FPN_trans_conv_head_freeze_body_local_weighted.yaml',
-                        help='Config file for training (and optionally testing)')
-    # parser.add_argument('--load_ckpt', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_triple_head_non_local_weighted/Nov03-21-05-13_N606-TITAN32_step/ckpt/model_step46952.pth', help='checkpoint path to load')
-    # parser.add_argument('--load_ckpt',
-    #                     default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_triple_head/Sep06-00-38-11_N606-TITAN32_step/ckpt/model_step79999.pth',
-    #                     help='checkpoint path to load')
-    parser.add_argument('--load_ckpt',
-                        default='/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train/Dec08-21-46-28_n606_step/ckpt/model_step19999.pth',
-                        help='checkpoint path to load')
-    # parser.add_argument('--load_ckpt',
-    #                     default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Sep02-00-16-19_n606_step/ckpt/model_step79999.pth',
-    #                     help='checkpoint path to load')
-    # /media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep04-12-54-39_n606_step/ckpt/model_step48677.pth
+    parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_triple_head_TLESS.yaml', help='Config file for training (and optionally testing)')
+    parser.add_argument('--load_ckpt', default=None, help='checkpoint path to load')
 
-    parser.add_argument('--dataset', dest='dataset', default='ApolloScape', help='Dataset to use')
+    parser.add_argument('--dataset', dest='dataset', default='TLESS', help='Dataset to use')
     parser.add_argument('--set', dest='set_cfgs', help='Set config keys. Key value sequence seperate by whitespace.''e.g. [key] [value] [key] [value]', default=[], nargs='+')
     parser.add_argument('--disp_interval', help='Display training info every N iterations', default=20, type=int)
     parser.add_argument('--no_cuda', dest='cuda', help='Do not use CUDA device', action='store_false')
-    parser.add_argument('--dataset_dir', default='/media/SSD_1TB/ApolloScape/ECCV2018_apollo/train')
-
-    parser.add_argument('--output_dir', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg')
-
+    parser.add_argument('--dataset_dir', default='/media/samsumg_1tb/6DB/TLESS')
+    parser.add_argument('--output_dir', default='/media/samsumg_1tb/6DB/ApolloScape_InstanceSeg')
 
     # Optimization
     # These options has the highest prioity and can overwrite the values in config file or values set by set_cfgs. `None` means do not overwrite.
@@ -88,19 +66,7 @@ def parse_args():
     # Resume training: requires same iterations per epoch
     parser.add_argument('--resume', default=False, help='resume to training on a checkpoint', action='store_true')
     parser.add_argument('--no_save', help='do not save anything', action='store_true')
-
-    #parser.add_argument('--load_ckpt', default=None, help='checkpoint path to load')
-
-    # parser.add_argument('--load_ckpt', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Aug31-11-41-25_N606-TITAN32_step/ckpt/model_step85385.pth', help='checkpoint path to load')
-
-    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Sep02-00-16-19_n606_step/ckpt/model_step61312.pth', help='checkpoint path to load')
-    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep02-12-03-23_N606-TITAN32_step/ckpt/model_step72750.pth', help='checkpoint path to load')
-    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep04-00-18-30_n606_step/ckpt/model_step29999.pth', help='checkpoint path to load')
-
-    #parser.add_argument('--ckpt_ignore_head', default=['car_trans_Outs'], help='heads parameters will be ignored during loading')
     parser.add_argument('--ckpt_ignore_head', default=[], help='heads parameters will be ignored during loading')
-
-
     parser.add_argument('--load_detectron', help='path to the detectron weight pickle file')
     parser.add_argument('--use_tfboard', default=True, help='Use tensorflow tensorboard to log training info', action='store_true')
 
@@ -144,16 +110,14 @@ def main():
 
     # Some manual adjustment for the ApolloScape dataset parameters here
     cfg.OUTPUT_DIR = args.output_dir
-    cfg.TRAIN.DATASETS = 'Car3D'
-    cfg.MODEL.NUM_CLASSES = 8
-    if cfg.CAR_CLS.SIM_MAT_LOSS:
-        cfg.MODEL.NUMBER_CARS = 79
-    else:
-        # Loss is only cross entropy, hence, we detect only car categories in the training set.
-        cfg.MODEL.NUMBER_CARS = 34
+    cfg.TRAIN.DATASETS = 'TLESS'
+    cfg.MODEL.NUM_CLASSES = 30 + 1
+
+    # We have only one class for all CAD models
+    cfg.MODEL.NUMBER_CARS = 1
     cfg.TRAIN.MIN_AREA = 196   # 14*14
     cfg.TRAIN.USE_FLIPPED = False  # Currently I don't know how to handle the flipped case
-    cfg.TRAIN.IMS_PER_BATCH = 1
+    cfg.TRAIN.IMS_PER_BATCH = 20
 
     cfg.NUM_GPUS = torch.cuda.device_count()
     effective_batch_size = cfg.TRAIN.IMS_PER_BATCH * cfg.NUM_GPUS * args.iter_size
@@ -234,7 +198,7 @@ def main():
         roidb,
         cfg.MODEL.NUM_CLASSES,
         training=True,
-        valid_keys=['has_visible_keypoints', 'boxes', 'seg_areas', 'gt_classes', 'gt_overlaps', 'box_to_gt_ind_map',
+        valid_keys=['has_visible_keypoints', 'boxes', 'seg_areas', 'gt_classes', 'gt_overlaps', 'box_to_gt_ind_map', 'segms',
                     'is_crowd', 'car_cat_classes', 'poses', 'quaternions', 'im_info'])
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -315,8 +279,7 @@ def main():
 
     ### Training Setups ###
     args.run_name = misc_utils.get_run_name() + '_step'
-    output_dir = os.path.join('/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train', args.run_name)
-    # output_dir = misc_utils.get_output_dir(args, args.run_name)
+    output_dir = misc_utils.get_output_dir(args, args.run_name)
     args.cfg_filename = os.path.basename(args.cfg_file)
 
     if not args.no_save:
@@ -348,7 +311,6 @@ def main():
         args,
         args.disp_interval,
         tblogger if args.use_tfboard and not args.no_save else None)
-    # warmup_factor_trans = 1.0
     try:
         logger.info('Training starts !')
         step = args.start_step
@@ -377,7 +339,8 @@ def main():
                 assert lr == cfg.SOLVER.BASE_LR
 
             # Learning rate decay
-            if decay_steps_ind < len(cfg.SOLVER.STEPS) and step == cfg.SOLVER.STEPS[decay_steps_ind]:
+            if decay_steps_ind < len(cfg.SOLVER.STEPS) and \
+                            step == cfg.SOLVER.STEPS[decay_steps_ind]:
                 logger.info('Decay the learning on step %d', step)
                 lr_new = lr * cfg.SOLVER.GAMMA
                 net_utils.update_learning_rate(optimizer, lr, lr_new)
@@ -399,9 +362,9 @@ def main():
                         input_data[key] = list(map(Variable, input_data[key]))
 
                 net_outputs = maskRCNN(**input_data)
-
-                net_outputs['losses']['loss_car_cls'] *= cfg.CAR_CLS.CAR_CLS_LOSS_BETA
-                net_outputs['losses']['loss_rot'] *= cfg.CAR_CLS.ROT_LOSS_BETA
+                if cfg.MODEL.CAR_CLS_HEAD_ON:
+                    net_outputs['losses']['loss_car_cls'] *= cfg.CAR_CLS.CAR_CLS_LOSS_BETA
+                    net_outputs['losses']['loss_rot'] *= cfg.CAR_CLS.ROT_LOSS_BETA
                 if cfg.MODEL.TRANS_HEAD_ON:
                     net_outputs['losses']['loss_trans'] *= cfg.TRANS_HEAD.TRANS_LOSS_BETA
 
@@ -409,18 +372,18 @@ def main():
 
                 # start training
                 # loss_car_cls: 2.233790, loss_rot: 0.296853, loss_trans: ~100
-                loss = net_outputs['losses']['loss_car_cls'] + net_outputs['losses']['loss_rot']
+                if not cfg.TRAIN.FREEZE_CONV_BODY and not cfg.TRAIN.FREEZE_RPN and not cfg.TRAIN.FREEZE_FPN:
+                    loss = net_outputs['total_loss_conv']
+                if cfg.MODEL.CAR_CLS_HEAD_ON:
+                    loss += net_outputs['losses']['loss_car_cls'] + net_outputs['losses']['loss_rot']
                 if cfg.MODEL.TRANS_HEAD_ON:
                     loss += net_outputs['losses']['loss_trans']
                 if cfg.MODEL.LOSS_3D_2D_ON:
                     loss += net_outputs['losses']['UV_projection_loss']
-                if not cfg.TRAIN.FREEZE_CONV_BODY and not cfg.TRAIN.FREEZE_RPN and not cfg.TRAIN.FREEZE_FPN:
-                    loss += net_outputs['total_loss_conv']
 
                 loss.backward()
             optimizer.step()
             training_stats.IterToc()
-
             training_stats.LogIterStats(step, lr, warmup_factor_trans)
 
             if (step + 1) % CHECKPOINT_PERIOD == 0:

@@ -161,6 +161,7 @@ def _CorrectMomentum(optimizer, param_keys, correction):
     logger.info('Scaling update history by %.6f (new lr / old lr)', correction)
     for p_key in param_keys:
         optimizer.state[p_key]['momentum_buffer'] *= correction
+        # pass
 
 
 def _get_lr_change_ratio(cur_lr, new_lr):
@@ -232,6 +233,8 @@ def load_ckpt(model, ckpt, ignore_list=[]):
             # There is no ignore list:
             else:
                 state_dict[name] = ckpt[name]
+        else:
+            print("Unload detectron mapping %s." % name)
     model.load_state_dict(state_dict, strict=False)
 
 

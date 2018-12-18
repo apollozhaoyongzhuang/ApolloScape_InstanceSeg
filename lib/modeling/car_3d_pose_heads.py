@@ -70,28 +70,32 @@ def fast_rcnn_car_cls_rot_losses(cls_score, rot_pred, car_cls, label_int32, quat
     device_id = cls_score.get_device()
     rois_label = Variable(torch.from_numpy(label_int32.astype('int64'))).cuda(device_id)
 
-    if cfg.CAR_CLS.SIM_MAT_LOSS:
-        shape_sim_mat_loss_mat = Variable(torch.from_numpy((1 - shape_sim_mat).astype('float32'))).cuda(device_id)
-        unique_modes = np.array(cfg.TRAIN.CAR_MODELS)
-        car_ids = label_int32.astype('int64')
-        loss_car_cls_total = Variable(torch.tensor(0.)).cuda(device_id)
-        for i in range(len(car_ids)):
-            pred_car_id = torch.argmax(car_cls[i])
-            gt_car_id = unique_modes[car_ids[i]]
-            loss = shape_sim_mat_loss_mat[gt_car_id, pred_car_id]
-            loss_car_cls_total += loss.sum()
+    if cfg.CAR_CLS.CLS_LOSS:
+        if cfg.CAR_CLS.SIM_MAT_LOSS:
+            shape_sim_mat_loss_mat = Variable(torch.from_numpy((1 - shape_sim_mat).astype('float32'))).cuda(device_id)
+            unique_modes = np.array(cfg.TRAIN.CAR_MODELS)
+            car_ids = label_int32.astype('int64')
+            loss_car_cls_total = Variable(torch.tensor(0.)).cuda(device_id)
+            for i in range(len(car_ids)):
+                pred_car_id = torch.argmax(car_cls[i])
+                gt_car_id = unique_modes[car_ids[i]]
+                loss = shape_sim_mat_loss_mat[gt_car_id, pred_car_id]
+                loss_car_cls_total += loss.sum()
 
-            loss_cls = loss_car_cls_total / len(cls_score)
-    else:
-        if len(ce_weight):
-            ce_weight = Variable(torch.from_numpy(np.array(ce_weight)).float()).cuda(device_id)
-            loss_cls = F.cross_entropy(cls_score, rois_label, ce_weight)
+                loss_cls = loss_car_cls_total / len(cls_score)
         else:
-            loss_cls = F.cross_entropy(cls_score, rois_label)
+            if len(ce_weight):
+                ce_weight = Variable(torch.from_numpy(np.array(ce_weight)).float()).cuda(device_id)
+                loss_cls = F.cross_entropy(cls_score, rois_label, ce_weight)
+            else:
+                loss_cls = F.cross_entropy(cls_score, rois_label)
 
-    # class accuracy
-    cls_preds = cls_score.max(dim=1)[1].type_as(rois_label)
-    accuracy_cls = cls_preds.eq(rois_label).float().mean(dim=0)
+        # class accuracy
+        cls_preds = cls_score.max(dim=1)[1].type_as(rois_label)
+        accuracy_cls = cls_preds.eq(rois_label).float().mean(dim=0)
+    else:
+        loss_cls = Variable(torch.from_numpy(np.array(0).astype('float32'))).cuda(device_id)
+        accuracy_cls = rois_label
 
     # loss rot
     quaternions = Variable(torch.from_numpy(quaternions.astype('float32'))).cuda(device_id)
@@ -177,8 +181,9 @@ def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0)):
     """
 
     device_id = deltas.get_device()
-
-    boxes = Variable(torch.from_numpy(rois[:, 1:].astype('float32'))).cuda(device_id)
+    im_scale = im_info[0][-1]
+    im_scale_np = im_scale.numpy()
+    boxes = Variable(torch.from_numpy((rois[:, 1:]/im_scale_np).astype('float32'))).cuda(device_id)
     weights = Variable(torch.from_numpy(np.array(weights).astype('float32'))).cuda(device_id)
 
     widths = boxes[:, 2] - boxes[:, 0] + 1.0
@@ -199,7 +204,6 @@ def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0)):
 
     pred_ctr_x = dx * widths[:, np.newaxis] + ctr_x[:, np.newaxis]
     pred_ctr_y = dy * heights[:, np.newaxis] + ctr_y[:, np.newaxis]
-
     pred_w = torch.exp(dw) * widths[:, np.newaxis]
     pred_h = torch.exp(dh) * heights[:, np.newaxis]
 
@@ -215,10 +219,7 @@ def bbox_transform_pytorch(rois, deltas, im_info, weights=(1.0, 1.0, 1.0, 1.0)):
     pred_boxes[:, 3::4] = pred_h
 
     if cfg.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC:
-        im_scale = im_info[0][-1]
         intrinsic_vect = np.array(cfg.TRANS_HEAD.CAMERA_INTRINSIC)
-        intrinsic_vect *= im_scale
-
         pred_boxes[:, 0::4] -= intrinsic_vect[2]
         pred_boxes[:, 0::4] /= intrinsic_vect[0]
         pred_boxes[:, 1::4] -= intrinsic_vect[3]
@@ -269,8 +270,7 @@ def bbox_transform_pytorch_out(boxes, im_scale, device_id):
     # Normalise box: NOT DONE properly yet! Hard coded
     if cfg.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC:
         intrinsic_vect = np.array(cfg.TRANS_HEAD.CAMERA_INTRINSIC)
-        intrinsic_vect *= im_scale
-
+        # intrinsic_vect *= im_scale   # The box are normalised already to scale 1
         pred_boxes[:, 0] -= intrinsic_vect[2]
         pred_boxes[:, 0] /= intrinsic_vect[0]
         pred_boxes[:, 1] -= intrinsic_vect[3]
@@ -419,6 +419,41 @@ class car_trans_outputs(nn.Module):
         if x.dim() == 4:
             x = x.squeeze(3).squeeze(2)
         trans_pred = self.trans_pred(x)
+        return trans_pred
+
+
+class car_trans_triple_outputs(nn.Module):
+    def __init__(self, dim_in_mlp, dim_in_car_cls_rot):
+        super().__init__()
+        self.car_cls_rot_linear = nn.Linear(dim_in_car_cls_rot, cfg.TRANS_HEAD.MLP_HEAD_DIM)
+        self.trans_pred = nn.Linear(dim_in_mlp + cfg.TRANS_HEAD.MLP_HEAD_DIM, cfg.TRANS_HEAD.OUTPUT_DIM)
+        self._init_weights()
+
+    def _init_weights(self):
+        mynn.init.XavierFill(self.car_cls_rot_linear.weight)
+        init.constant_(self.car_cls_rot_linear.bias, 0)
+        init.normal_(self.trans_pred.weight, std=0.1)
+        init.constant_(self.trans_pred.bias, 0)
+
+    def detectron_weight_mapping(self):
+        detectron_weight_mapping = {
+            'car_cls_rot_linear.weight': 'car_cls_rot_linear_w',
+            'car_cls_rot_linear.bias': 'car_cls_rot_linear_b',
+            'trans_pred.weight': 'trans_pred_w',
+            'trans_pred.bias': 'trans_pred_b',
+        }
+        orphan_in_detectron = []
+        return detectron_weight_mapping, orphan_in_detectron
+
+    def forward(self, x_mlp, x_car_cls_rot):
+        if x_mlp.dim() == 4:
+            x_mlp = x_mlp.squeeze(3).squeeze(2)
+
+        batch_size = x_mlp.size(0)
+
+        x_car_cls_rot = F.relu(self.car_cls_rot_linear(x_car_cls_rot.view(batch_size, -1)), inplace=True)
+        x_merge = F.relu(torch.cat((x_mlp, x_car_cls_rot), dim=1))
+        trans_pred = self.trans_pred(x_merge)
         return trans_pred
 
 

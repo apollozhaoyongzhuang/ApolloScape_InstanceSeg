@@ -45,9 +45,10 @@ import utils.blob as blob_utils
 import utils.fpn as fpn_utils
 import utils.image as image_utils
 import utils.keypoints as keypoint_utils
-from utilities.utils import im_car_trans_geometric
+from utilities.utils import im_car_trans_geometric, im_car_trans_geometric_ssd6d
 from utilities.utils import quaternion_to_euler_angle
 
+from slic import SLICProcessor
 
 def im_detect_all(model, im, box_proposals=None, timers=None, dataset=None):
     """Process the outputs of model for testing
@@ -68,7 +69,10 @@ def im_detect_all(model, im, box_proposals=None, timers=None, dataset=None):
     if cfg.TEST.BBOX_AUG.ENABLED:
         scores, boxes, im_scale, blob_conv = im_detect_bbox_aug(model, im, box_proposals)
     else:
-        scores, boxes, im_scale, blob_conv = im_detect_bbox(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, box_proposals)
+        if cfg.MODEL.NON_LOCAL_TEST:
+            scores, boxes, im_scale, blob_conv, f_div_C = im_detect_bbox(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, box_proposals)
+        else:
+            scores, boxes, im_scale, blob_conv = im_detect_bbox(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, box_proposals)
     timers['im_detect_bbox'].toc()
 
     # score and boxes are from the whole image after score thresholding and nms
@@ -88,43 +92,56 @@ def im_detect_all(model, im, box_proposals=None, timers=None, dataset=None):
         timers['im_detect_mask'].toc()
 
         timers['misc_mask'].tic()
-        cls_segms = segm_results(cls_boxes, masks, boxes, im.shape[0], im.shape[1])
+        cls_segms = segm_results_SLIC(cls_boxes, masks, boxes, im, im.shape[0], im.shape[1])
+        # if cfg.TEST.Mask_SLIC_Processing:
+        #     cls_segms = segm_results_SLIC(cls_boxes, masks, boxes, im, im.shape[0], im.shape[1])
+        # else:
+        #     cls_segms = segm_results(cls_boxes, masks, boxes, im.shape[0], im.shape[1])
         timers['misc_mask'].toc()
     else:
         cls_segms = None
 
     # Further head for 3d car pose estimation
-    if cfg.MODEL.CAR_CLS_HEAD_ON and boxes.shape[0] > 0:
-        timers['im_car_cls'].tic()
+    if cfg.TRANS_HEAD.INPUT_TRIPLE_HEAD and boxes.shape[0] > 0:
+        timers['triple_head'].tic()
         if cfg.TEST.CAR_CLS_AUG.ENABLED:
-            raise Exception('Not implemented')
+            car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head_aug(model, im, im_scale, boxes, blob_conv)
         else:
+            car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head(model, im_scale, boxes, blob_conv)
+        timers['triple_head'].toc()
+
+        if cfg.TEST.GEOMETRIC_TRANS:
+            car_trans_pred_geo = im_car_trans_geometric_ssd6d(dataset, boxes, euler_angle, car_cls, im_scale=1.0)
+            car_trans_pred = car_trans_pred_geo
+
+    else:
+        if cfg.MODEL.CAR_CLS_HEAD_ON and boxes.shape[0] > 0:
+            timers['im_car_cls'].tic()
             car_cls_score, car_cls, euler_angle = im_car_cls(model, im_scale, boxes, blob_conv)
-        timers['im_car_cls'].toc()
-
-    else:
-        car_cls = None
-        euler_angle = None
-
-    # Trans head for 3d car translation (pose) estimation:
-
-    if cfg.MODEL.TRANS_HEAD_ON and boxes.shape[0] > 0:
-        timers['im_car_trans'].tic()
-        if cfg.TEST.CAR_CLS_AUG.ENABLED:
-            raise Exception('Not implemented')
+            timers['im_car_cls'].toc()
         else:
-            device_id = blob_conv[0].get_device()
-            if cfg.TRANS_HEAD.INPUT_CONV_BODY:
-                car_trans_pred = im_car_trans_conv_body(model, im_scale, boxes, blob_conv, device_id)
+            car_cls = None
+            euler_angle = None
+
+        # Trans head for 3d car translation (pose) estimation:
+
+        if cfg.MODEL.TRANS_HEAD_ON and boxes.shape[0] > 0:
+            timers['im_car_trans'].tic()
+            if cfg.TEST.CAR_CLS_AUG.ENABLED:
+                raise Exception('Not implemented')
             else:
-                car_trans_pred = im_car_trans(model, im_scale, boxes, device_id)
-        timers['im_car_trans'].toc()
-    elif boxes.shape[0] > 0:
-        # we use geometric method ###
-        car_trans_pred = im_car_trans_geometric(dataset, boxes, euler_angle, car_cls, im_scale=1.0)
-        timers['im_car_trans'].toc()
-    else:
-        car_trans_pred = None
+                device_id = blob_conv[0].get_device()
+                if cfg.TRANS_HEAD.INPUT_CONV_BODY:
+                    car_trans_pred = im_car_trans_conv_body(model, im_scale, boxes, blob_conv, device_id)
+                else:
+                    car_trans_pred = im_car_trans(model, im_scale, boxes, device_id)
+            timers['im_car_trans'].toc()
+        elif boxes.shape[0] > 0:
+            # we use geometric method ###
+            car_trans_pred = im_car_trans_geometric(dataset, boxes, euler_angle, car_cls, im_scale=1.0)
+            timers['im_car_trans'].toc()
+        else:
+            car_trans_pred = None
 
     if cfg.MODEL.KEYPOINTS_ON and boxes.shape[0] > 0:
         timers['im_detect_keypoints'].tic()
@@ -140,7 +157,10 @@ def im_detect_all(model, im, box_proposals=None, timers=None, dataset=None):
     else:
         cls_keyps = None
 
-    return cls_boxes, cls_segms, cls_keyps, car_cls, euler_angle, car_trans_pred
+    if cfg.MODEL.NON_LOCAL_TEST and not cfg.TEST.BBOX_AUG.ENABLED:
+        return cls_boxes, cls_segms, cls_keyps, car_cls, euler_angle, car_trans_pred, f_div_C.data.cpu().numpy().squeeze()
+    else:
+        return cls_boxes, cls_segms, cls_keyps, car_cls, euler_angle, car_trans_pred
 
 
 def im_conv_body_only(model, im, target_scale, target_max_size):
@@ -219,7 +239,10 @@ def im_detect_bbox(model, im, target_scale, target_max_size, boxes=None):
         scores = scores[inv_index, :]
         pred_boxes = pred_boxes[inv_index, :]
 
-    return scores, pred_boxes, im_scale, return_dict['blob_conv']
+    if cfg.MODEL.NON_LOCAL_TEST:
+        return scores, pred_boxes, im_scale, return_dict['blob_conv'], return_dict['f_div_C']
+    else:
+        return scores, pred_boxes, im_scale, return_dict['blob_conv']
 
 
 def im_detect_bbox_aug(model, im, box_proposals=None):
@@ -287,7 +310,10 @@ def im_detect_bbox_aug(model, im, box_proposals=None):
     # Compute detections for the original image (identity transform) last to
     # ensure that the Caffe2 workspace is populated with blobs corresponding
     # to the original image on return (postcondition of im_detect_bbox)
-    scores_i, boxes_i, im_scale_i, blob_conv_i = im_detect_bbox(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals)
+    if cfg.MODEL.NON_LOCAL_TEST:
+        scores_i, boxes_i, im_scale_i, blob_conv_i, f_div_C_i = im_detect_bbox(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals)
+    else:
+        scores_i, boxes_i, im_scale_i, blob_conv_i = im_detect_bbox(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes=box_proposals)
     add_preds_t(scores_i, boxes_i)
 
     # Combine the predicted scores
@@ -329,10 +355,14 @@ def im_detect_bbox_hflip(model, im, target_scale, target_max_size, box_proposals
         box_proposals_hf = box_utils.flip_boxes(box_proposals, im_width)
     else:
         box_proposals_hf = None
-
-    scores_hf, boxes_hf, im_scale, _ = im_detect_bbox(
-        model, im_hf, target_scale, target_max_size, boxes=box_proposals_hf
-    )
+    if cfg.MODEL.NON_LOCAL_TEST:
+        scores_hf, boxes_hf, im_scale, _, f_div_C = im_detect_bbox(
+            model, im_hf, target_scale, target_max_size, boxes=box_proposals_hf
+        )
+    else:
+        scores_hf, boxes_hf, im_scale, _ = im_detect_bbox(
+            model, im_hf, target_scale, target_max_size, boxes=box_proposals_hf
+        )
 
     # Invert the detections computed on the flipped image
     boxes_inv = box_utils.flip_boxes(boxes_hf, im_width)
@@ -349,9 +379,11 @@ def im_detect_bbox_scale(model, im, target_scale, target_max_size, box_proposals
             model, im, target_scale, target_max_size, box_proposals=box_proposals
         )
     else:
-        scores_scl, boxes_scl, _, _ = im_detect_bbox(
-            model, im, target_scale, target_max_size, boxes=box_proposals
-        )
+        if cfg.MODEL.NON_LOCAL_TEST:
+            scores_scl, boxes_scl, _, _, f_div_C = im_detect_bbox(model, im, target_scale, target_max_size, boxes=box_proposals)
+
+        else:
+            scores_scl, boxes_scl, _, _ = im_detect_bbox(model, im, target_scale, target_max_size, boxes=box_proposals)
     return scores_scl, boxes_scl
 
 
@@ -428,6 +460,56 @@ def im_car_cls(model, im_scale, boxes, blob_conv):
     # euler_angle[:, 2] = np.clip(euler_angle[:, 2], cfg.CAR_CLS.ROT_MIN[2], cfg.CAR_CLS.ROT_MAX[2])
 
     return car_cls_score, car_cls, euler_angle
+
+
+def triple_head(model, im_scale, boxes, blob_conv):
+    """Infer car class with translation and rotation all together
+    This function must be called after im_detect_bbox as it assumes that the workspace is already populated
+    with the necessary blobs.
+
+    Arguments:
+        model (DetectionModelHelper): the detection model to use
+        im_scale (list): image blob scales as returned by im_detect_bbox
+        boxes (ndarray): R x 4 array of bounding box detections (e.g., as
+            returned by im_detect_bbox)
+        blob_conv (Variable): base features from the backbone network.
+
+    Returns:
+        car_cls_score, car_cls, euler_angle, car_trans_pred
+    """
+
+    inputs = {'rois': _get_rois_blob(boxes, im_scale)}
+
+    # Add multi-level rois for FPN
+    if cfg.FPN.MULTILEVEL_ROIS:
+        _add_multilevel_rois_for_test(inputs, 'rois')
+
+    # Car cls and rot head
+    car_cls_score, car_cls, rot_pred, car_cls_feat = model.module.car_cls_net(blob_conv, inputs)
+    # Trans head
+    device_id = blob_conv[0].get_device()
+    car_trans_pred = model.module.car_trans_triple(boxes, im_scale, car_cls_feat, device_id)
+
+    # Save them into cpu
+    car_trans_pred = car_trans_pred.data.cpu().numpy()
+    car_cls_score = car_cls_score.data.cpu().numpy()
+    car_cls = car_cls.data.cpu().numpy()
+    rot_pred = rot_pred.data.cpu().numpy()
+    if rot_pred.shape[0] > 1:
+        # there is more than one
+        car_cls_score = car_cls_score.squeeze()
+        car_cls = car_cls.squeeze()
+        rot_pred = rot_pred.squeeze()
+        car_trans_pred = car_trans_pred.squeeze()
+
+    # The following two lines are not necessary if our network output already normalises the output
+    norm = np.linalg.norm(rot_pred, axis=1)
+    rot_pred_norm = rot_pred / norm[:, None]
+
+    # normalise the unit quaternion here
+    euler_angle = np.array([quaternion_to_euler_angle(x) for x in rot_pred_norm])
+
+    return car_cls_score, car_cls, euler_angle, car_trans_pred
 
 
 def im_car_trans(model, im_scale, boxes, device_id):
@@ -514,6 +596,100 @@ def im_detect_mask(model, im_scale, boxes, blob_conv):
         pred_masks = pred_masks.reshape([-1, 1, M, M])
 
     return pred_masks
+
+
+def triple_head_aug(model, im, im_scale, boxes, blob_conv):
+    """Performs mask detection with test-time augmentations.
+
+    Arguments:
+        model (DetectionModelHelper): the detection model to use
+        boxes (ndarray): R x 4 array of bounding boxes
+        im_scale (list): image blob scales as returned by im_detect_bbox
+        blob_conv (Tensor): base features from the backbone network.
+
+    Returns:
+        car_cls_score, car_cls, euler_angle, car_trans_pred
+        masks (ndarray): R x K x M x M array of class specific soft masks
+    """
+    assert not cfg.TEST.MASK_AUG.SCALE_SIZE_DEP, \
+        'Size dependent scaling not implemented'
+
+    # Collect lists computed under different transformations
+    car_cls_score_ts, car_cls_ts, euler_angle_ts, car_trans_pred_ts = [], [], [], []
+
+    # Compute list for the original image (identity transform)
+    car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head(model, im_scale, boxes, blob_conv)
+    car_cls_score_ts.append(car_cls_score)
+    car_cls_ts.append(car_cls)
+    euler_angle_ts.append(euler_angle)
+    car_trans_pred_ts.append(car_trans_pred)
+
+    # Perform mask detection on the horizontally flipped image
+    if cfg.TEST.CAR_CLS_AUG.H_FLIP:
+        # masks_hf = im_detect_mask_hflip(model, im, cfg.TEST.SCALE, cfg.TEST.MAX_SIZE, boxes)
+        # masks_ts.append(masks_hf)
+        car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head_hflip(model, im,  cfg.TEST.SCALE, boxes, cfg.TEST.MAX_SIZE)
+        car_cls_score_ts.append(car_cls_score)
+        car_cls_ts.append(car_cls)
+        euler_angle_ts.append(euler_angle)
+        car_trans_pred_ts.append(car_trans_pred)
+
+    # Compute detections at different scales
+    for scale in cfg.TEST.CAR_CLS_AUG.SCALES:
+        max_size = cfg.TEST.CAR_CLS_AUG.MAX_SIZE
+        car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head_scale(model, im, scale, max_size, boxes)
+        car_cls_score_ts.append(car_cls_score)
+        car_cls_ts.append(car_cls)
+        euler_angle_ts.append(euler_angle)
+        car_trans_pred_ts.append(car_trans_pred)
+
+        if cfg.TEST.CAR_CLS_AUG.SCALE_H_FLIP:
+            car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head_scale(model, im, scale, max_size, boxes, hflip=True)
+            car_cls_score_ts.append(car_cls_score)
+            car_cls_ts.append(car_cls)
+            euler_angle_ts.append(euler_angle)
+            car_trans_pred_ts.append(car_trans_pred)
+
+    # Combine the predicted soft masks
+    if cfg.TEST.MASK_AUG.HEUR == 'SOFT_AVG':
+        car_cls_score_c = np.mean(car_cls_score_ts, axis=0)
+        car_cls_c = np.mean(car_cls_ts, axis=0)
+        euler_angle_c = np.mean(euler_angle_ts, axis=0)
+        car_trans_pred_c = np.mean(car_trans_pred_ts, axis=0)
+    else:
+        raise NotImplementedError('Heuristic {} not supported'.format(cfg.TEST.MASK_AUG.HEUR))
+
+    return car_cls_score_c, car_cls_c, euler_angle_c, car_trans_pred_c
+
+
+def triple_head_scale(model, im, target_scale, target_max_size, boxes, hflip=False):
+    """Computes masks at the given scale."""
+    if hflip:
+        car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head_hflip(model, im, target_scale, boxes, target_max_size)
+    else:
+        blob_conv, im_scale = im_conv_body_only(model, im, target_scale, target_max_size)
+        car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head(model, im_scale, boxes, blob_conv)
+
+    return car_cls_score, car_cls, euler_angle, car_trans_pred
+
+
+def triple_head_hflip(model, im, im_scale, boxes, target_max_size):
+    """Performs mask detection on the horizontally flipped image.
+    Function signature is the same as for im_detect_mask_aug.
+    """
+    # Compute the masks for the flipped image
+    im_hf = im[:, ::-1, :]
+    boxes_hf = box_utils.flip_boxes(boxes, im.shape[1])
+
+    blob_conv, im_scale = im_conv_body_only(model, im_hf, im_scale, target_max_size)
+    car_cls_score, car_cls, euler_angle, car_trans_pred = triple_head(model, im_scale, boxes_hf, blob_conv)
+
+    # Invert the predicted soft masks
+    # Only should the euler angle changed here
+
+    car_trans_pred[:, 0] = -car_trans_pred[:, 0]
+    euler_angle[:, 1] = -euler_angle[:, 1]
+    return car_cls_score, car_cls, euler_angle, car_trans_pred
 
 
 def im_detect_mask_aug(model, im, boxes, im_scale, blob_conv):
@@ -933,6 +1109,9 @@ def segm_results(cls_boxes, masks, ref_boxes, im_h, im_w):
             h = np.maximum(h, 1)
 
             mask = cv2.resize(padded_mask, (w, h))
+
+
+
             mask = np.array(mask > cfg.MRCNN.THRESH_BINARIZE, dtype=np.uint8)
             im_mask = np.zeros((im_h, im_w), dtype=np.uint8)
 
@@ -957,6 +1136,88 @@ def segm_results(cls_boxes, masks, ref_boxes, im_h, im_w):
 
     assert mask_ind == masks.shape[0]
     return cls_segms
+
+
+def segm_results_SLIC(cls_boxes, masks, ref_boxes, im, im_h, im_w):
+    num_classes = cfg.MODEL.NUM_CLASSES
+    cls_segms = [[] for _ in range(num_classes)]
+    mask_ind = 0
+    # To work around an issue with cv2.resize (it seems to automatically pad
+    # with repeated border values), we manually zero-pad the masks by 1 pixel
+    # prior to resizing back to the original image resolution. This prevents
+    # "top hat" artifacts. We therefore need to expand the reference boxes by an
+    # appropriate factor.
+    M = cfg.MRCNN.RESOLUTION
+    scale = (M + 2.0) / M
+    ref_boxes = box_utils.expand_boxes(ref_boxes, scale)
+    ref_boxes = ref_boxes.astype(np.int32)
+    padded_mask = np.zeros((M + 2, M + 2), dtype=np.float32)
+
+    # skip j = 0, because it's the background class
+    for j in range(1, num_classes):
+        segms = []
+        for _ in range(cls_boxes[j].shape[0]):
+            if cfg.MRCNN.CLS_SPECIFIC_MASK:
+                padded_mask[1:-1, 1:-1] = masks[mask_ind, j, :, :]
+            else:
+                padded_mask[1:-1, 1:-1] = masks[mask_ind, 0, :, :]
+
+            ref_box = ref_boxes[mask_ind, :]
+            w = (ref_box[2] - ref_box[0] + 1)
+            h = (ref_box[3] - ref_box[1] + 1)
+            w = np.maximum(w, 1)
+            h = np.maximum(h, 1)
+
+            mask = cv2.resize(padded_mask, (w, h))
+
+            images_bbox = im[ref_box[1]:ref_box[3], ref_box[0]:ref_box[2], :]  # 确保下标顺序正确??  y1, x1, y2, x2 = bbox
+            images_bbox_superpixels = SLICProcessor(images_bbox, 50, 5)  ## 对每个bbox都分割成 K 50 75 100 150 200 个superpixel
+            print(mask_ind)
+            images_bbox_superpixels_clusters = images_bbox_superpixels.iterate_10times_return_clusters()
+            for cluster in images_bbox_superpixels_clusters.clusters:
+                cluster_mask_max = cluster_mask_sum = 0
+                cluster_mask_min = 1.0
+                if cluster.pixels.__len__() == 0:
+                    continue
+                for pixels in cluster.pixels:
+                    x = pixels[0]
+                    y = pixels[1]
+                    cluster_mask_sum += mask[x, y]
+                    if mask[x, y] > cluster_mask_max:
+                        cluster_mask_max = mask[x, y]
+                    if mask[x, y] < cluster_mask_min:
+                        cluster_mask_min = mask[x, y]
+
+                cluster_mask_ave = cluster_mask_sum / cluster.pixels.__len__()
+                cluster_mask_mid = (cluster_mask_max + cluster_mask_min) / 2
+                for pixels in cluster.pixels:
+                    mask[pixels[0], pixels[1]] = cluster_mask_ave
+
+            mask = np.array(mask > cfg.MRCNN.THRESH_BINARIZE, dtype=np.uint8)
+            im_mask = np.zeros((im_h, im_w), dtype=np.uint8)
+
+            x_0 = max(ref_box[0], 0)
+            x_1 = min(ref_box[2] + 1, im_w)
+            y_0 = max(ref_box[1], 0)
+            y_1 = min(ref_box[3] + 1, im_h)
+
+            im_mask[y_0:y_1, x_0:x_1] = mask[
+                                        (y_0 - ref_box[1]):(y_1 - ref_box[1]), (x_0 - ref_box[0]):(x_1 - ref_box[0])]
+
+            # Get RLE encoding used by the COCO evaluation API
+            rle = mask_util.encode(np.array(im_mask[:, :, np.newaxis], order='F'))[0]
+            # For dumping to json, need to decode the byte string.
+            # https://github.com/cocodataset/cocoapi/issues/70
+            rle['counts'] = rle['counts'].decode('ascii')
+            segms.append(rle)
+
+            mask_ind += 1
+
+        cls_segms[j] = segms
+
+    assert mask_ind == masks.shape[0]
+    return cls_segms
+
 
 
 def keypoint_results(cls_boxes, pred_heatmaps, ref_boxes):
@@ -1032,8 +1293,7 @@ def _add_multilevel_rois_for_test(blobs, name):
 def _get_blobs(im, rois, target_scale, target_max_size):
     """Convert an image and RoIs within that image into network inputs."""
     blobs = {}
-    blobs['data'], im_scale, blobs['im_info'] = \
-        blob_utils.get_image_blob(im, target_scale, target_max_size)
+    blobs['data'], im_scale, blobs['im_info'] = blob_utils.get_image_blob(im, target_scale, target_max_size)
     if rois is not None:
         blobs['rois'] = _get_rois_blob(rois, im_scale)
     return blobs, im_scale

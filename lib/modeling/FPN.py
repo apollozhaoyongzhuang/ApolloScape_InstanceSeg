@@ -11,6 +11,8 @@ from modeling.generate_anchors import generate_anchors
 from modeling.generate_proposals import GenerateProposalsOp
 from torch.nn import init
 
+from modeling.non_local import NONLocalBlock2D
+
 # Lowest and highest pyramid levels in the backbone network. For FPN, we assume
 # that all networks have 5 spatial reductions, each by a factor of 2. Level 1
 # would correspond to the input image, hence it does not make sense to use it.
@@ -90,15 +92,18 @@ class fpn(nn.Module):
         # Step 1: recursively build down starting from the coarsest backbone level
         #
         # For the coarest backbone level: 1x1 conv only seeds recursion
-        self.conv_top = nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0)
-        if cfg.FPN.USE_GN:
-            self.conv_top = nn.Sequential(
-                nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0, bias=False),
-                nn.GroupNorm(net_utils.get_group_gn(fpn_dim), fpn_dim,
-                             eps=cfg.GROUP_NORM.EPSILON)
-            )
-        else:
+        if cfg.FPN.NON_LOCAL:
+            self.non_local_top = NONLocalBlock2D(in_channels=fpn_dim_lateral[0], sub_sample=False)
             self.conv_top = nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0)
+        else:
+            if cfg.FPN.USE_GN:
+                self.conv_top = nn.Sequential(
+                    nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0, bias=False),
+                    nn.GroupNorm(net_utils.get_group_gn(fpn_dim), fpn_dim,
+                                 eps=cfg.GROUP_NORM.EPSILON)
+                )
+            else:
+                self.conv_top = nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0)
         self.topdown_lateral_modules = nn.ModuleList()
         self.posthoc_modules = nn.ModuleList()
 
@@ -174,7 +179,23 @@ class fpn(nn.Module):
             mapping_to_detectron['conv_body.' + key] = value
 
         d_prefix = 'fpn_inner_' + self.fpn_level_info.blobs[0]
-        if cfg.FPN.USE_GN:
+        if cfg.FPN.NON_LOCAL:
+            mapping_to_detectron['non_local_top.g.weight'] = d_prefix + '_g_w'
+            mapping_to_detectron['non_local_top.g.bias'] = d_prefix + '_g_b'
+            mapping_to_detectron['non_local_top.theta.weight'] = d_prefix + '_theta_w'
+            mapping_to_detectron['non_local_top.theta.bias'] = d_prefix + '_theta_b'
+            mapping_to_detectron['non_local_top.phi.weight'] = d_prefix + '_phi_w'
+            mapping_to_detectron['non_local_top.phi.bias'] = d_prefix + '_phi_b'
+            mapping_to_detectron['non_local_top.W.0.weight'] = d_prefix + '_0_w'
+            mapping_to_detectron['non_local_top.W.0.bias'] = d_prefix + '_0_b'
+            mapping_to_detectron['non_local_top.W.1.weight'] = d_prefix + '_1_w'
+            mapping_to_detectron['non_local_top.W.1.bias'] = d_prefix + '_1_b'
+            mapping_to_detectron['non_local_top.W.1.running_mean'] = d_prefix + '_1_running_mean'
+            mapping_to_detectron['non_local_top.W.1.running_var'] = d_prefix + '_1_running_var'
+            mapping_to_detectron['conv_top.weight'] = d_prefix + '_w'
+            mapping_to_detectron['conv_top.bias'] = d_prefix + '_b'
+
+        elif cfg.FPN.USE_GN:
             mapping_to_detectron['conv_top.0.weight'] = d_prefix + '_w'
             mapping_to_detectron['conv_top.1.weight'] = d_prefix + '_gn_s'
             mapping_to_detectron['conv_top.1.bias'] = d_prefix + '_gn_b'
@@ -229,7 +250,11 @@ class fpn(nn.Module):
             conv_body_blobs.append(
                 getattr(self.conv_body, 'res%d' % (i + 1))(conv_body_blobs[-1])
             )
-        fpn_inner_blobs = [self.conv_top(conv_body_blobs[-1])]
+        if cfg.FPN.NON_LOCAL:
+            z, f_div_C = self.non_local_top(conv_body_blobs[-1])
+            fpn_inner_blobs = [self.conv_top(z)]
+        else:
+            fpn_inner_blobs = [self.conv_top(conv_body_blobs[-1])]
         for i in range(self.num_backbone_stages - 1):
             fpn_inner_blobs.append(
                 self.topdown_lateral_modules[i](fpn_inner_blobs[-1], conv_body_blobs[-(i + 2)])
@@ -254,7 +279,10 @@ class fpn(nn.Module):
             return fpn_output_blobs[-1]
         else:
             # use all levels
-            return fpn_output_blobs
+            if cfg.FPN.NON_LOCAL:
+                return fpn_output_blobs, f_div_C
+            else:
+                return fpn_output_blobs
 
 
 class topdown_lateral_module(nn.Module):

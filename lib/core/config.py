@@ -46,6 +46,9 @@ __C.TRAIN.SCALES = (600, )
 # Finetune weight, it's dependant upon the test result ( or the instance count.... it's a bit hack)
 __C.TRAIN.CE_FINETUNE_WIGHT = (1, 1.20,  6.4,  14.35, 1., 2.48,  1.534,  4.088)
 
+#  The classes we care about in the box head, for example, in WAD, car cls is 4
+__C.TRAIN.CARE_CLS = list([4])
+
 # Finetune Car Class weight (Inverse frequencis of cars)
 __C.TRAIN.CE_CAR_CLS_FINETUNE_WIGHT = list()
 
@@ -168,6 +171,9 @@ __C.TRAIN.GT_MIN_AREA = -1
 
 # Freeze the backbone architecture during training if set to True
 __C.TRAIN.FREEZE_CONV_BODY = False
+
+# Freeze the RPN architecture during training if set to True
+__C.TRAIN.FREEZE_RPN = False
 
 # Freeze the FPN class and box head during training if set to True
 __C.TRAIN.FREEZE_FPN =  False
@@ -301,8 +307,22 @@ __C.TEST.BBOX_AUG.ASPECT_RATIO_H_FLIP = False
 # Test-time augmentations for car class detection
 # See configs/test_time_aug/e2e_mask_rcnn_R-50-FPN_2x.yaml for an example
 # ---------------------------------------------------------------------------- #
+
+# Using "SSD-6D: Making RGB-Based 3D Detection and 6D Pose Estimation Great Again" CVPR for estimating Trans
+__C.TEST.GEOMETRIC_TRANS = False
+
+
 __C.TEST.CAR_CLS_AUG = AttrDict()
 __C.TEST.CAR_CLS_AUG.ENABLED = False
+
+# Horizontal flip at the original scale (id transform)
+__C.TEST.CAR_CLS_AUG.H_FLIP = False
+# Each scale is the pixel size of an image's shortest side
+__C.TEST.CAR_CLS_AUG.SCALES = ()
+# Max pixel size of the longer side
+__C.TEST.CAR_CLS_AUG.MAX_SIZE = 4000
+# Horizontal flip at each scale
+__C.TEST.CAR_CLS_AUG.SCALE_H_FLIP = False
 # ---------------------------------------------------------------------------- #
 # Test-time augmentations for mask detection
 # See configs/test_time_aug/e2e_mask_rcnn_R-50-FPN_2x.yaml for an example
@@ -463,9 +483,15 @@ __C.MODEL.CAR_CLS_HEAD_ON = False
 # Indicates the model makes 3d car translation predictions
 __C.MODEL.TRANS_HEAD_ON = False
 
+# Indicates the model makes 3d car translation predictions
+__C.MODEL.NON_LOCAL_TEST = False
+
 # Indicates the model use 3D to 2D projection error for multi-loss
 __C.MODEL.LOSS_3D_2D_ON = False
 
+
+# Z mean for model rendering # used for 6DB
+__C.MODEL.Z_MEAN = 0
 
 # Indicates the model makes keypoint predictions (as in Mask R-CNN for
 # keypoints)
@@ -766,10 +792,16 @@ __C.FPN.EXTRA_CONV_LEVELS = False
 # Use GroupNorm in the FPN-specific layers (lateral, etc.)
 __C.FPN.USE_GN = False
 
+# Use Non local block (right before the last residual block of res4)
+__C.FPN.NON_LOCAL = False
+
+# Use Non local block (weighted)
+# Attention Is All You Need: 1/sqrt(d)
+__C.FPN.NON_LOCAL_WEIGHTED = False
+
 # ---------------------------------------------------------------------------- #
 # CAR_CLS options
 # ---------------------------------------------------------------------------- #
-
 __C.CAR_CLS = AttrDict()
 
 # The type of RoI head to use for bounding box classification and regression
@@ -811,11 +843,17 @@ __C.CAR_CLS.SIM_MAT_LOSS = False
 # Normalise quaternion output to unit length.
 __C.CAR_CLS.ROT_LOSS = 'L1'  # ['MSE', 'L1', 'ARCCOS', 'HUBER']
 
+# Whether we will have class loss in the second head
+__C.CAR_CLS.CLS_LOSS = True
+
 # Rotational Huber treshold: we care more about the inside, stabilise the learning process
 __C.CAR_CLS.ROT_HUBER_THRESHOLD = 5
 
 # Rotational loss multiplication coefficient
 __C.CAR_CLS.ROT_LOSS_BETA = 1.0
+
+# Rotational loss multiplication coefficient
+__C.CAR_CLS.CAR_CLS_LOSS_BETA = 1.0
 
 # For rotation clipping
 # Translation Mean DIM
@@ -835,6 +873,10 @@ __C.TRANS_HEAD.TRANS_HEAD = ''
 
 # INPUT DIM: bbox (x1, y1, x2, y2)
 __C.TRANS_HEAD.INPUT_DIM = 4
+
+# INPUT will also include conv body from ResNet and then car cls and rot head (will be of dim 1024)
+__C.TRANS_HEAD.INPUT_TRIPLE_HEAD = False
+
 
 # INPUT will also include conv body from ResNet
 __C.TRANS_HEAD.INPUT_CONV_BODY = False
@@ -858,7 +900,7 @@ __C.TRANS_HEAD.LOSS = 'MSE'   # ['MSE', 'L1', 'HUBER']
 __C.TRANS_HEAD.TRANS_HUBER_THRESHOLD = 2.8
 
 # Loss mulitplication coefficience
-__C.TRANS_HEAD.LOSS_BETA = 0.01
+__C.TRANS_HEAD.TRANS_LOSS_BETA = 0.01
 
 # Input norm by camera intrinsic
 __C.TRANS_HEAD.IPUT_NORM_BY_INTRINSIC = True

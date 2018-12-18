@@ -11,8 +11,7 @@ import datetime
 import argparse
 import time
 import copy
-import utilities.eval_utils as euts
-
+import utilities.utils as uts
 from collections import defaultdict
 from collections import namedtuple
 
@@ -21,6 +20,47 @@ Criterion = namedtuple('Criterion', [
     'transDis',  # thresholds for translation
     'oriDis',  # thresholds for orientation
 ])
+
+def pose_similarity(dt, gt, shape_sim_mat):
+    """compute pose similarity in terms of shape, translation and rotation
+    Input:
+        dt: np.ndarray detection [N x 7] first 6 dims are roll, pitch, yaw, x, y, z
+        gt: save with dt
+
+    Output:
+        sim_shape: similarity based on shape eval
+        dis_trans: distance based on translation eval
+        dis_rot:   dis.. based on rotation eval
+    """
+    dt_num = len(dt)
+    gt_num = len(gt)
+    car_num = shape_sim_mat.shape[0]
+
+    dt_car_id = np.uint32(dt[:, -1])
+    gt_car_id = np.uint32(gt[:, -1])
+
+    idx = np.tile(dt_car_id[:, None], (1, gt_num)).flatten() * car_num + \
+          np.tile(gt_car_id[None, :], (dt_num, 1)).flatten()
+    sims_shape = shape_sim_mat.flatten()[idx]
+    sims_shape = np.reshape(sims_shape, [dt_num, gt_num])
+
+    # translation similarity
+    dt_car_trans = dt[:, 3:-1]
+    gt_car_trans = gt[:, 3:-1]
+    dis_trans = np.linalg.norm(np.tile(dt_car_trans[:, None, :], [1, gt_num, 1]) -
+                               np.tile(gt_car_trans[None, :, :], [dt_num, 1, 1]), axis=2)
+
+    # rotation similarity
+    dt_car_rot = uts.euler_angles_to_quaternions(dt[:, :3])
+    gt_car_rot = uts.euler_angles_to_quaternions(gt[:, :3])
+    q1 = dt_car_rot / np.linalg.norm(dt_car_rot, axis=1)[:, None]
+    q2 = gt_car_rot / np.linalg.norm(gt_car_rot, axis=1)[:, None]
+
+    # diff = abs(np.matmul(q1, np.transpose(q2)))
+    diff = abs(1 - np.sum(np.square(np.tile(q1[:, None, :], [1, gt_num, 1]) - np.tile(q2[None, :, :], [dt_num, 1, 1])), axis=2) / 2.0)
+    dis_rot = 2 * np.arccos(diff) * 180 / np.pi
+
+    return sims_shape, dis_trans, dis_rot
 
 
 class Detect3DEval(object):
@@ -77,25 +117,14 @@ class Detect3DEval(object):
         self.stats = []  # result summarization
         self.sims = {}  # sims between all gts and dts
 
-        #self.image_list = self._checker(args.test_dir, args.gt_dir)
-        self.image_list = self._checker_intersection(args.test_dir, args.gt_dir)
+        self.image_list = self._checker_intersection_one_image(args.test_dir, args.gt_dir, args.vis_num)
         self.params = Params(simType=args.simType)
 
-    def _checker(self, res_folder, gt_folder):
+    def _checker_intersection_one_image(self, res_folder, gt_folder, vis_num):
         """Check whether results folder contain same image number
         """
         gt_list = sorted(os.listdir(gt_folder))
-        res_list = sorted(os.listdir(res_folder))
-        if len(gt_list) != len(res_list):
-            raise Exception('results folder image num is not the same as ground truth')
-
-        return gt_list
-
-    def _checker_intersection(self, res_folder, gt_folder):
-        """Check whether results folder contain same image number
-        """
-        gt_list = sorted(os.listdir(gt_folder))
-        res_list = sorted(os.listdir(res_folder))
+        res_list = [sorted(os.listdir(res_folder))[vis_num]]
         image_list = list(set(gt_list).intersection(res_list))
         print("GT: %d, RES: %d, Evaluated: %d" % (len(gt_list), len(res_list), len(image_list)))
         return image_list
@@ -157,6 +186,8 @@ class Detect3DEval(object):
         self._paramsEval = copy.deepcopy(self.params)
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format(toc - tic))
+        # we also return the result for All
+        return self.evalImgs[0]
 
     def compute_sim(self, image_name):
         """Compute similarity for an image between ground truth and detected results
@@ -181,7 +212,7 @@ class Detect3DEval(object):
             raise Exception('unknown simType for similarity computation')
 
         # compute iou between each dt and gt region
-        sims = euts.pose_similarity(d, g, p.shape_sim_mat)
+        sims = pose_similarity(d, g, p.shape_sim_mat)
         sims = np.stack(sims, axis=2)
         return sims
 
@@ -236,10 +267,10 @@ class Detect3DEval(object):
                     m = -1
                     for gind, g in enumerate(gt):
                         # if this gt already matched, continue
-                        if gtm[tind, gind] > 0:  #该GT已经被匹配
+                        if gtm[tind, gind] > 0:
                             continue
                         # if dt matched to reg gt, and on ignore gt, stop
-                        if m > -1 and gtIg[m] == 0 and gtIg[gind] == 1: #
+                        if m > -1 and gtIg[m] == 0 and gtIg[gind] == 1:
                             break
 
                         # continue to next gt unless better match made
@@ -405,7 +436,7 @@ class Detect3DEval(object):
 
             """
             p = self.params
-            iStr = ' {:<18} {} @[ Criteria={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.5f}'
+            iStr = ' {:<18} {} @[ Criteria={:<9} | area={:>6s} | maxDets={:>3d} ] = {:0.3f}'
             titleStr = 'Average Precision' if ap == 1 else 'Average Recall'
             typeStr = '(AP)' if ap == 1 else '(AR)'
             simstr = 'c0:c5' if simThr is None else simThr

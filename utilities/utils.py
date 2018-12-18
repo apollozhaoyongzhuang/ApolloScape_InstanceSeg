@@ -42,6 +42,39 @@ def euler_angles_to_quaternions(angle):
     return q
 
 
+def quaternion_upper_hemispher(q):
+    """
+    The quaternion q and −q represent the same rotation be-
+    cause a rotation of θ in the direction v is equivalent to a
+    rotation of 2π − θ in the direction −v. One way to force
+    uniqueness of rotations is to require staying in the “upper
+    half” of S 3 . For example, require that a ≥ 0, as long as
+    the boundary case of a = 0 is handled properly because of
+    antipodal points at the equator of S 3 . If a = 0, then require
+    that b ≥ 0. However, if a = b = 0, then require that c ≥ 0
+    because points such as (0,0,−1,0) and (0,0,1,0) are the
+    same rotation. Finally, if a = b = c = 0, then only d = 1 is
+    allowed.
+    :param q:
+    :return:
+    """
+    a, b, c, d = q
+    if a < 0:
+        q = -q
+    if a == 0:
+        if b < 0:
+            q = -q
+        if b == 0:
+            if c < 0:
+                q = -q
+            if c == 0:
+                print(q)
+                q[3] = 0
+
+    return q
+
+
+
 def quaternion_to_euler_angle(q):
 
     """Convert quaternion to euler angel.
@@ -133,27 +166,29 @@ def rotation_matrix_to_euler_angles(R, check=True):
         euler angle [x/roll, y/pitch, z/yaw]
     """
 
-    def isRotationMatrix(R) :
+    def isRotationMatrix(R):
         Rt = np.transpose(R)
         shouldBeIdentity = np.dot(Rt, R)
-        I = np.identity(3, dtype = R.dtype)
+        I = np.identity(3, dtype=R.dtype)
         n = np.linalg.norm(I - shouldBeIdentity)
-        return n < 1e-6
+        #return n < 3 *(1e-6)
+        # Di Wu relax the condition for TLESS dataset
+        return n < 1e-5
 
     if check:
         assert(isRotationMatrix(R))
 
-    sy = math.sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
+    sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
     singular = sy < 1e-6
 
-    if  not singular:
-        x = math.atan2(R[2,1] , R[2,2])
-        y = math.atan2(-R[2,0], sy)
-        z = math.atan2(R[1,0], R[0,0])
+    if not singular:
+        x = math.atan2(R[2, 1], R[2, 2])
+        y = math.atan2(-R[2, 0], sy)
+        z = math.atan2(R[1, 0], R[0, 0])
 
     else:
-        x = math.atan2(-R[1,2], R[1,1])
-        y = math.atan2(-R[2,0], sy)
+        x = math.atan2(-R[1, 2], R[1, 1])
+        y = math.atan2(-R[2, 0], sy)
         z = 0
 
     return np.array([x, y, z])
@@ -302,6 +337,57 @@ def im_car_trans_geometric(dataset, boxes, euler_angle, car_cls, im_scale=1.0):
         yt = zc * yc - Ryc
         zt = zc - Rzc
         pred_pose = np.array([xt, yt, zt])
+        car_trans_pred.append(pred_pose)
+
+    return np.array(car_trans_pred)
+
+
+def im_car_trans_geometric_ssd6d(dataset, boxes, euler_angle, car_cls, im_scale=1.0):
+    ###
+    fx, fy, cx, cy = extract_intrinsic(dataset)
+
+    car_cls_max = np.argmax(car_cls, axis=1)
+    car_names = [dataset.Car3D.car_id2name[x].name for x in dataset.Car3D.unique_car_models[car_cls_max]]
+
+    if im_scale != 1:
+        raise Exception("not implemented, check it")
+    boxes = boxes / im_scale
+
+    car_trans_pred = []
+    # canonical centroid zr = 10.0
+    zr = 10.0
+    trans_vect = np.zeros((3, 1))
+    trans_vect[2] = zr
+    for car_idx in range(boxes.shape[0]):
+        box = boxes[car_idx]
+
+        # lr denotes diagonal length of the precomputed bounding box and ls denotes the diagonal length
+        # of the predicted bounding box on the image plane
+        ls = np.sqrt((box[2] - box[0]) ** 2 + (box[3] - box[1])**2)
+        # project 3D points to 2d image plane
+        # https://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
+        euler_angle_i = euler_angle[car_idx]
+        rmat = euler_angles_to_rotation_matrix(euler_angle_i)
+        car = dataset.Car3D.car_models[car_names[car_idx]]
+        x_y_z_R = np.matmul(rmat, np.transpose(np.float32(car['vertices'])))
+        x_y_z_R_T = x_y_z_R + trans_vect
+        x_y_z_R_T_hat = x_y_z_R_T / x_y_z_R_T[2, :]
+
+        u = fx * x_y_z_R_T_hat[0, :] + cx
+        v = fy * x_y_z_R_T_hat[1, :] + cy
+        lr = np.sqrt((u.max() - u.min())**2 + (v.max() - v.min())**2)
+
+        zs = lr * zr / ls
+
+        xc = (box[0] + box[2]) / 2
+        yc = (box[1] + box[3]) / 2
+        xc_syn = (u.max() + u.min())/2
+        yc_syn = (v.max() + v.min())/2
+
+        xt = zs * (xc - xc_syn) / fx
+        yt = zs * (yc - yc_syn) / fy
+
+        pred_pose = np.array([xt, yt, zs])
         car_trans_pred.append(pred_pose)
 
     return np.array(car_trans_pred)

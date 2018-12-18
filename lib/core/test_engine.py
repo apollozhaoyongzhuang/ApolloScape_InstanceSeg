@@ -22,6 +22,10 @@ from __future__ import unicode_literals
 
 from collections import defaultdict
 import cv2
+from matplotlib import pyplot as plt
+from matplotlib.ticker import MultipleLocator
+import matplotlib.patches as patches
+
 import datetime
 import logging
 import numpy as np
@@ -399,17 +403,46 @@ def test_net_Car3D(
     if cfg.MODEL.TRANS_HEAD_ON:
         json_dir = os.path.join(output_dir, 'json_'+args.list_flag+'_trans')
     else:
-        json_dir = os.path.join(output_dir, 'json_'+args.list_flag)
+        json_dir = os.path.join(output_dir, 'json_d'+args.list_flag)
 
-    json_dir += '_iou' + str(args.iou_ignore_threshold)
+    json_dir += '_iou_' + str(args.iou_ignore_threshold)
+    if not cfg.TEST.BBOX_AUG.ENABLED:
+        json_dir += '_BBOX_AUG_single_scale'
+    else:
+        json_dir += '_BBOX_AUG_multiple_scale'
+
+    if not cfg.TEST.CAR_CLS_AUG.ENABLED:
+        json_dir += '_CAR_CLS_AUG_single_scale'
+    else:
+        json_dir += '_CAR_CLS_AUG_multiple_scale'
+
+    if cfg.TEST.GEOMETRIC_TRANS:
+        json_dir += '_GEOMETRIC_TRANS'
+
+    if cfg.TEST.CAR_CLS_AUG.H_FLIP and cfg.TEST.CAR_CLS_AUG.SCALE_H_FLIP:
+        json_dir += '_hflipped'
+
     roidb = roidb
     for i, entry in enumerate(roidb):
         image_ids.append(entry['image'])
     args.image_ids = image_ids
 
+    all_boxes = [[[] for _ in range(num_images)] for _ in range(cfg.MODEL.NUM_CLASSES)]
+    if ind_range is not None:
+        if cfg.TEST.SOFT_NMS.ENABLED:
+            det_name = 'detection_range_%s_%s_soft_nms' % tuple(ind_range)
+        else:
+            det_name = 'detection_range_(%d_%d)_nms_%.1f' % (ind_range[0], ind_range[1], cfg.TEST.NMS)
+        if cfg.TEST.BBOX_AUG.ENABLED:
+            det_name += '_multiple_scale'
+        det_name += '.pkl'
+    else:
+        det_name = 'detections.pkl'
+    det_file = os.path.join(output_dir, det_name)
+
     file_complete_flag = [not os.path.exists(os.path.join(json_dir, entry['image'].split('/')[-1][:-4] + '.json')) for entry in roidb]
     # If we don't have the complete json file, we will load the model and execute the following:
-    if np.sum(file_complete_flag):
+    if np.sum(file_complete_flag) or not os.path.exists(det_file):
         model = initialize_model_from_cfg(args, gpu_id=gpu_id)
         for i in tqdm(range(len(roidb))):
             entry = roidb[i]
@@ -432,29 +465,62 @@ def test_net_Car3D(
             ignored_mask = cv2.imread(ignored_mask_img, cv2.IMREAD_GRAYSCALE)
             ignored_mask_binary = np.zeros(ignored_mask.shape)
             ignored_mask_binary[ignored_mask > 250] = 1
-            cls_boxes_i, cls_segms_i, _, car_cls_i, euler_angle_i, trans_pred_i = im_detect_all(model, im, box_proposals, timers, dataset)
+            if cfg.MODEL.NON_LOCAL_TEST and not cfg.TEST.BBOX_AUG.ENABLED:
+                cls_boxes_i, cls_segms_i, _, car_cls_i, euler_angle_i, trans_pred_i, f_div_C = im_detect_all(model, im, box_proposals, timers, dataset)
+            else:
+                cls_boxes_i, cls_segms_i, _, car_cls_i, euler_angle_i, trans_pred_i = im_detect_all(model, im, box_proposals, timers, dataset)
+            extend_results(i, all_boxes, cls_boxes_i)
+
+            # We draw the grid overlap with an image here
+            if False:
+                f_div_C_plot = f_div_C.copy()
+
+                grid_size = 32  # This is the res5 output space
+                fig = plt.figure()
+                ax1 = fig.add_subplot(1, 2, 1)
+                ax2 = fig.add_subplot(1, 2, 2)
+                ax1.imshow(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
+                ax1.grid(which='minor')
+
+                # We choose the point here:
+                # x, y = int(1757/grid_size), int(1040/grid_size)   # val 164
+                x, y = int(1370/grid_size), int(1802/grid_size)
+
+                # draw a patch hre
+                rect = patches.Rectangle((x*grid_size, y*grid_size), grid_size, grid_size,
+                                         linewidth=1, edgecolor='r', facecolor='r')
+                ax1.add_patch(rect)
+
+                att_point_map = f_div_C_plot[106*x+y, :]
+                att_point_map = np.reshape(att_point_map, (85, 106))
+                ax2.imshow(att_point_map, cmap='jet')
+
+                # we draw 20 arrows
+                for i in range(20):
+                    x_max, y_max = np.unravel_index(att_point_map.argmax(), att_point_map.shape)
+                    v = att_point_map[x_max, y_max]
+                    att_point_map[x_max, y_max] = 0
+                    ax1.arrow(x*grid_size, y*grid_size, (y_max-x)*grid_size, (x_max-y)*grid_size,
+                              fc="r", ec="r", head_width=(10-i)*grid_size/2, head_length=grid_size)
+
 
             if i % 10 == 0:  # Reduce log file size
                 ave_total_time = np.sum([t.average_time for t in timers.values()])
                 eta_seconds = ave_total_time * (num_images - i - 1)
                 eta = str(datetime.timedelta(seconds=int(eta_seconds)))
-                det_time = (
-                    timers['im_detect_bbox'].average_time +
-                    timers['im_detect_mask'].average_time +
-                    timers['im_car_cls'].average_time + timers['im_car_trans'].average_time
-                )
+                det_time = timers['im_detect_bbox'].average_time
+                triple_head_time = timers['triple_head'].average_time
                 misc_time = (
                     timers['misc_bbox'].average_time +
-                    timers['misc_mask'].average_time +
-                    timers['misc_keypoints'].average_time
+                    timers['misc_mask'].average_time
                 )
                 logger.info(
                     (
                         'im_detect: range [{:d}, {:d}] of {:d}: '
-                        '{:d}/{:d} {:.3f}s + {:.3f}s (eta: {})'
+                        '{:d}/{:d} det-time: {:.3f}s + triple-head-time: {:.3f}s + misc_time: {:.3f}s (eta: {})'
                     ).format(
                         start_ind + 1, end_ind, total_num_images, start_ind + i + 1,
-                        start_ind + num_images, det_time, misc_time, eta
+                        start_ind + num_images, det_time, triple_head_time, misc_time, eta
                     )
                 )
 
@@ -490,6 +556,17 @@ def test_net_Car3D(
                     box_alpha=0.8,
                     dataset=dataset.Car3D)
 
+        save_object(dict(all_boxes=all_boxes), det_file)
+
+    # The following evaluate the detection result from Faster-RCNN Head
+    # If we have already computed the boxes
+    if os.path.exists(det_file):
+        obj = load_object(det_file)
+        all_boxes = obj['all_boxes']
+
+    results = task_evaluation.evaluate_boxes(dataset, all_boxes, output_dir, args)
+
+    # The following evaluate the mAP of car poses
     args.test_dir = json_dir
     args.gt_dir = args.dataset_dir + 'car_poses'
     args.res_file = os.path.join(output_dir, 'json_'+args.list_flag+'_res.txt')
