@@ -31,7 +31,7 @@ from utils.training_stats import TrainingStats
 
 
 #os.environ['CUDA_VISIBLE_DEVICES'] = '1, 2, 3'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 # Set up logging and load config options
 logger = setup_logging(__name__)
@@ -46,24 +46,23 @@ def parse_args():
     """Parse input arguments"""
     parser = argparse.ArgumentParser(description='Train a X-RCNN network')
     # The following cfg and ckpt will be changed accordingly.
-    # parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_triple_head_freeze_body_local_weighted.yaml', help='Config file for training (and optionally testing)')
-    # parser.add_argument('--cfg', dest='cfg_file',
-    #                     default='./configs/e2e_3d_car_101_FPN_triple_head_freeze_body_non_local_weighted.yaml',
-    #                     help='Config file for training (and optionally testing)')
-    parser.add_argument('--cfg', dest='cfg_file',
-                        default='./configs/e2e_3d_car_101_FPN_trans_conv_head_freeze_body_local_weighted.yaml',
-                        help='Config file for training (and optionally testing)')
-    # parser.add_argument('--load_ckpt', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_triple_head_non_local_weighted/Nov03-21-05-13_N606-TITAN32_step/ckpt/model_step46952.pth', help='checkpoint path to load')
+    # parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_trans_conv_head_freeze_body_local_+weighted.yaml', help='Config file for training (and optionally testing)')
+    #
     # parser.add_argument('--load_ckpt',
-    #                     default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_triple_head/Sep06-00-38-11_N606-TITAN32_step/ckpt/model_step79999.pth',
+    #                     default='/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train/Sep02-00-16-19_n606_step(without + e2e_3d_car_101_FPN)/ckpt/model_step79999.pth',
     #                     help='checkpoint path to load')
+
+    # parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_triple_head_freeze_body_local_+weighted.yaml', help='Config file for training (and optionally testing)')
+    #
+    # parser.add_argument('--load_ckpt',
+    #                     default='/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train/Sep06-00-38-11_N606-TITAN32_step(TH-triple-head e2e_3d_car_101_FPN_triple_head)/ckpt/model_step79999.pth',
+    #                     help='checkpoint path to load')
+
+    parser.add_argument('--cfg', dest='cfg_file', default='./configs/e2e_3d_car_101_FPN_triple_head_freeze_body_non_local_+weighted.yaml', help='Config file for training (and optionally testing)')
+
     parser.add_argument('--load_ckpt',
-                        default='/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train/Dec08-21-46-28_n606_step/ckpt/model_step19999.pth',
+                        default='/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train/e2e_3d_car_101_FPN_triple_head_freeze_body_local_+weighted/Dec21-21-26-46_n606_step/ckpt/model_step159999.pth',
                         help='checkpoint path to load')
-    # parser.add_argument('--load_ckpt',
-    #                     default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Sep02-00-16-19_n606_step/ckpt/model_step79999.pth',
-    #                     help='checkpoint path to load')
-    # /media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep04-12-54-39_n606_step/ckpt/model_step48677.pth
 
     parser.add_argument('--dataset', dest='dataset', default='ApolloScape', help='Dataset to use')
     parser.add_argument('--set', dest='set_cfgs', help='Set config keys. Key value sequence seperate by whitespace.''e.g. [key] [value] [key] [value]', default=[], nargs='+')
@@ -71,7 +70,7 @@ def parse_args():
     parser.add_argument('--no_cuda', dest='cuda', help='Do not use CUDA device', action='store_false')
     parser.add_argument('--dataset_dir', default='/media/SSD_1TB/ApolloScape/ECCV2018_apollo/train')
 
-    parser.add_argument('--output_dir', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg')
+    parser.add_argument('--output_dir', default='/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train')
 
 
     # Optimization
@@ -89,13 +88,6 @@ def parse_args():
     parser.add_argument('--resume', default=False, help='resume to training on a checkpoint', action='store_true')
     parser.add_argument('--no_save', help='do not save anything', action='store_true')
 
-    #parser.add_argument('--load_ckpt', default=None, help='checkpoint path to load')
-
-    # parser.add_argument('--load_ckpt', default='/media/SSD_1TB/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Aug31-11-41-25_N606-TITAN32_step/ckpt/model_step85385.pth', help='checkpoint path to load')
-
-    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN/Sep02-00-16-19_n606_step/ckpt/model_step61312.pth', help='checkpoint path to load')
-    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep02-12-03-23_N606-TITAN32_step/ckpt/model_step72750.pth', help='checkpoint path to load')
-    #parser.add_argument('--load_ckpt', default='/media/samsumg_1tb/ApolloScape/ApolloScape_InstanceSeg/e2e_3d_car_101_FPN_trans_conv_head/Sep04-00-18-30_n606_step/ckpt/model_step29999.pth', help='checkpoint path to load')
 
     #parser.add_argument('--ckpt_ignore_head', default=['car_trans_Outs'], help='heads parameters will be ignored during loading')
     parser.add_argument('--ckpt_ignore_head', default=[], help='heads parameters will be ignored during loading')
@@ -315,8 +307,8 @@ def main():
 
     ### Training Setups ###
     args.run_name = misc_utils.get_run_name() + '_step'
-    output_dir = os.path.join('/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train', args.run_name)
-    # output_dir = misc_utils.get_output_dir(args, args.run_name)
+    # output_dir = os.path.join('/media/SSD_1TB/zzy/ApolloScape/ECCV2018_apollo/train', args.run_name)
+    output_dir = misc_utils.get_output_dir(args, args.run_name)
     args.cfg_filename = os.path.basename(args.cfg_file)
 
     if not args.no_save:

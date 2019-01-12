@@ -2,14 +2,14 @@ MODEL:
   TYPE: generalized_rcnn
   CONV_BODY: FPN.fpn_ResNet101_conv5_body
   FASTER_RCNN: True
-  MASK_ON: True
+  MASK_ON: False
   MASK_TRAIN_ON: False   # Whether we train the mask
   CAR_CLS_HEAD_ON: True
   TRANS_HEAD_ON: True
-  NON_LOCAL_TEST: False
+  NON_LOCAL_TEST: False # !!!!!We will only collect the f_div_C during test (single GPU only)
   # For not weighted W_theta * W_phi.t() :
-  # W.mean() = 1.00000e-07 * 3.3739
-  # W.std() =  1.00000e-04 * 4.1553)
+  # W.mean() = 1.00000e-04 * 8.2295
+  # W.std() =  1.00000e-02 * 3.3999)
 
 NUM_GPUS: 4
 SOLVER:
@@ -17,11 +17,10 @@ SOLVER:
   LR_POLICY: steps_with_decay
   BASE_LR: 0.001
   GAMMA: 0.1
-  MAX_ITER:  80000
-  STEPS: [0, 20000, 40000]
+  MAX_ITER:  160000
+  STEPS: [0, 20000, 40000, 120000]
   WARM_UP_ITERS: 1000
   WARM_UP_FACTOR_TRANS: 0.01  #Warm up factor for 3d car translation
-
 FPN:
   FPN_ON: True
   FPN_LOSS_SHOW: False
@@ -54,7 +53,7 @@ CAR_CLS:
 TRANS_HEAD:
   TRANS_HEAD: car_3d_pose_heads.bbox_2mlp_head
   INPUT_CONV_BODY: False
-  INPUT_TRIPLE_HEAD: True  # without +/cat operation , trans_conv-head without 100/car_cls_rot
+  INPUT_TRIPLE_HEAD: False  # without +/cat operation , trans_conv-head without 100/car_cls_rot
 
   INPUT_DIM: 4
   OUTPUT_DIM: 3
@@ -73,7 +72,6 @@ MRCNN:
   ROI_XFORM_SAMPLING_RATIO: 2  # default 0
   DILATION: 1  # default 2
   CONV_INIT: MSRAFill  # default GaussianFill
-
 TRAIN:
   #SCALES: (800,)
 #  SCALES: (1600, 2000)  # If it's 0, means that we don't resize it
@@ -90,6 +88,7 @@ TRAIN:
         4.65,  6.62, 11.54,  0.6 ,  6.73, 29.48,  7.82,  5.55, 12.36,
        25.85,  8.63,  6.49,  4.13,  2.6 ,  6.3 , 10.84]  # Find tune car according to it's appearance
   CAR_MODELS: [2,  6,  7,  8,  9, 12, 14, 16, 18, 19, 20, 23, 25, 27, 28, 31, 32, 35, 37,  40, 43, 46, 47, 48, 50, 51, 54, 56, 60, 61, 66, 70, 71, 76]
+
   FREEZE_CONV_BODY: True
   FREEZE_RPN: True
   FREEZE_FPN: True
@@ -109,7 +108,7 @@ TEST:
     ENABLED: True
     VOTE_TH: 0.9
   BBOX_AUG:
-    ENABLED: False
+    ENABLED: True
     SCORE_HEUR: UNION
     COORD_HEUR: UNION
     H_FLIP: True
@@ -129,4 +128,3 @@ TEST:
 
   GEOMETRIC_TRANS: False # Using "SSD-6D: Making RGB-Based 3D Detection and 6D Pose Estimation Great Again" CVPR for estimating Trans
 
-#  Mask_SLIC_Processing: True # Using SLIC superpixels segmentation to sharpen mask
